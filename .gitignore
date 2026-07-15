@@ -38,6 +38,12 @@ mlruns/
 .vscode/
 *.swp
 .DS_Store
+._*
+.AppleDouble
+.LSOverride
+._*
+.AppleDouble
+.LSOverride
 
 # Secrets / local infra
 docker-compose.override.yml
