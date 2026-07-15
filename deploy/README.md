@@ -65,7 +65,7 @@
 |---|---|---|---|
 | `APP_ENV` | 环境标签，进入所有日志与指标 | `dev` | `prod` |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Postgres 凭据 | `quant/quant/quant` | 长随机；密文托管 |
-| `DATABASE_URL` | 应用连接串 | `postgresql+psycopg2://quant:quant@postgres:5432/quant` | Vault 注入 |
+| `DATABASE_URL` | 应用连接串（driver = psycopg v3，与 pyproject.toml 一致） | `postgresql+psycopg://quant:quant@postgres:5432/quant` | Vault 注入 |
 | `REDIS_URL` | 队列/缓存 | `redis://redis:6379/0` | TLS，凭据从 Vault |
 | `S3_ENDPOINT_URL` | 对象存储 | `http://minio:9000` | AWS/Aliyun endpoint |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | 对象存储凭据 | `minio/minio12345` | KMS / IAM Role |
@@ -98,9 +98,9 @@ docker compose --env-file deploy\.env -f deploy\docker-compose.yml up -d
 # 4) 等 Postgres healthcheck 通过（约 15s）
 docker inspect --format="{{.State.Health.Status}}" quant-postgres
 
-# 5) 数据库迁移
-$env:DATABASE_URL="postgresql+psycopg2://quant:quant@localhost:5432/quant"
-alembic -c sql/alembic.ini upgrade head
+# 5) 数据库迁移（在仓库根目录执行，alembic.ini 与 sql/migrations 相对路径已配好）
+$env:DATABASE_URL="postgresql+psycopg://quant:quant@localhost:5432/quant"
+alembic upgrade head
 
 # 6) 启 API + Worker
 uvicorn apps.api.main:app --host 0.0.0.0 --port 8000

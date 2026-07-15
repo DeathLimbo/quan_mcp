@@ -38,7 +38,6 @@ mlruns/
 .vscode/
 *.swp
 .DS_Store
-.qoder/
 
 # Secrets / local infra
 docker-compose.override.yml

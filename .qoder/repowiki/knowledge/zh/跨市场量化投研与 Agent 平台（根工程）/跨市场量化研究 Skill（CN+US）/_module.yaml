@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: skills
+title: 跨市场量化研究 Skill（CN+US）
+scope:
+    - skills/
+source_files: []
+depends_on: []
+related_to: []

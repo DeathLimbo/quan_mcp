@@ -1,0 +1,52 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: Q0DeR-MaG1C-BrAnCh-Fo2-NoN-GiT-Or-No-C0MmIt
+nodes_managed: true
+exported_at: "2026-07-15T13:40:00Z"
+modules:
+    "":
+        dir_name: 跨市场量化投研与 Agent 平台（根工程）
+        title: 跨市场量化投研与 Agent 平台（根工程）
+        scope:
+            - README.md
+            - .gitignore
+            - .pre-commit-config.yaml
+            - alembic.ini
+            - pyproject.toml
+            - .env.example
+        source_files: []
+        children:
+            - config_deploy
+            - skills
+            - tests
+        depends_on: []
+        related_to: []
+    config_deploy:
+        dir_name: 应用配置与本地开发环境编排
+        title: 应用配置与本地开发环境编排
+        scope:
+            - configs/
+            - deploy/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    skills:
+        dir_name: 跨市场量化研究 Skill（CN+US）
+        title: 跨市场量化研究 Skill（CN+US）
+        scope:
+            - skills/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    tests:
+        dir_name: 量化系统测试套件（单元、集成与黄金数据集）
+        title: 量化系统测试套件（单元、集成与黄金数据集）
+        scope:
+            - tests/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

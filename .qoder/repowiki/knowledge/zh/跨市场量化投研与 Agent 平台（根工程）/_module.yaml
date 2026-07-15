@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: ""
+title: 跨市场量化投研与 Agent 平台（根工程）
+scope:
+    - README.md
+    - .gitignore
+    - .pre-commit-config.yaml
+    - alembic.ini
+    - pyproject.toml
+    - .env.example
+source_files: []
+depends_on: []
+related_to: []
