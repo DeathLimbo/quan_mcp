@@ -1,0 +1,62 @@
+app:
+  env: dev
+  timezone: UTC
+  log_level: INFO
+  service_name: cross-market-quant
+
+markets:
+  enabled: [CN, US]
+  cn:
+    exchanges: [SSE, SZSE, BSE, CFFEX]
+    trading_tz: Asia/Shanghai
+    settlement: T+1
+    price_limit_default: 0.10
+    st_price_limit: 0.05
+    star_price_limit: 0.20
+  us:
+    exchanges: [NASDAQ, NYSE, ARCA, BATS]
+    trading_tz: America/New_York
+    settlement: T+1
+    dst_source: pytz
+    penny_stock_threshold_usd: 5.00
+
+point_in_time:
+  as_of_default: latest_available
+  fundamentals_lag_days:
+    cn: 1
+    us: 0
+  event_lag_seconds: 3600
+
+feature_engineering:
+  policy: single_source_of_truth
+  registry: packages.features.registry
+
+risk_engine:
+  layers:
+    - permission
+    - regulatory
+    - market_state
+    - price_limit_and_liquidity
+    - exposure_limits
+    - stress_delta
+    - operational
+    - execution_feasibility
+  authoritative: true
+  fail_closed: true
+
+model_registry:
+  states: [DRAFT, CANDIDATE, SHADOW, PRODUCTION, RETIRED]
+  cross_market_share_production: false
+
+mcp:
+  ban:
+    - arbitrary_sql
+    - arbitrary_shell
+    - arbitrary_python
+  read_write_split: true
+  admin_dual_control: true
+
+llm:
+  can_generate_probabilities: false
+  can_bypass_risk: false
+  can_execute_orders: false

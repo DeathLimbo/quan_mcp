@@ -1,0 +1,6 @@
+{"type": "bar", "instrument_id": "CN.SSE.EQUITY.600519", "date": "2024-01-02", "o": "1700.00", "h": "1720.00", "l": "1695.00", "c": "1710.00", "v": "1200000"}
+{"type": "bar", "instrument_id": "CN.SSE.EQUITY.600519", "date": "2024-01-03", "o": "1710.50", "h": "1730.00", "l": "1700.00", "c": "1725.00", "v": "1100000"}
+{"type": "bar", "instrument_id": "CN.SSE.EQUITY.600519", "date": "2024-01-04", "halted": true, "reason": "restructuring"}
+{"type": "bar", "instrument_id": "CN.SSE.EQUITY.600519", "date": "2024-01-05", "halted": true, "reason": "restructuring"}
+{"type": "bar", "instrument_id": "CN.SSE.EQUITY.600519", "date": "2024-01-08", "o": "1780.00", "h": "1810.00", "l": "1770.00", "c": "1800.00", "v": "3200000", "note": "trading resumes"}
+{"type": "order", "instrument_id": "CN.SSE.EQUITY.600519", "submit_date": "2024-01-03", "side": "BUY", "qty": 100}

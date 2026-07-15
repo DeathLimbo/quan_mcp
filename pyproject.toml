@@ -1,0 +1,122 @@
+[project]
+name = "cross-market-quant"
+version = "0.1.0"
+description = "Cross-market quantitative research and Agent platform (CN A-share, US equity, funds, ETF)"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Proprietary" }
+
+# NOTE: Pin ranges pragmatically. This first-version dependency set matches the
+# tech stack decided in the implementation plan (spec V4, chapter 13):
+# FastAPI backend, Polars + Pandas for data, LightGBM + scikit-learn for ML,
+# Alembic for migrations, VectorBT for vectorised research backtests,
+# MLflow for experiment tracking. Extras are grouped so single-purpose apps
+# (worker, MCP) can install only what they need.
+dependencies = [
+    "fastapi>=0.111,<0.116",
+    "uvicorn[standard]>=0.30,<0.32",
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.3,<3.0",
+    "httpx>=0.27,<0.29",
+    "sqlalchemy>=2.0,<2.1",
+    "alembic>=1.13,<2.0",
+    "psycopg[binary]>=3.2,<4.0",
+    "redis>=5.0,<6.0",
+    "rq>=1.16,<2.0",
+    "polars>=1.0,<2.0",
+    "pandas>=2.2,<3.0",
+    "pyarrow>=16.1,<18.0",
+    "numpy>=1.26,<3.0",
+    "python-dateutil>=2.9,<3.0",
+    "tzdata>=2024.1",
+    "orjson>=3.10,<4.0",
+    "structlog>=24.1,<25.0",
+    "typer>=0.12,<0.13",
+    "prometheus-client>=0.20,<0.22",
+    "minio>=7.2,<8.0",
+]
+
+[project.optional-dependencies]
+ml = [
+    "scikit-learn>=1.5,<2.0",
+    "lightgbm>=4.3,<5.0",
+    "mlflow>=2.14,<3.0",
+]
+backtest = [
+    "vectorbt>=0.26,<0.28",
+    "numba>=0.60,<0.61",
+]
+data-sources = [
+    # Prototype-grade free data source adapters. Keep them behind the
+    # MarketDataAdapter protocol so a paid source can drop in later.
+    "akshare>=1.13,<2.0",
+    "yfinance>=0.2.40,<0.3",
+    "requests>=2.32,<3.0",
+]
+dev = [
+    "pytest>=8.2,<9.0",
+    "pytest-asyncio>=0.23,<0.25",
+    "pytest-cov>=5.0,<7.0",
+    "ruff>=0.5,<0.8",
+    "black>=24.4,<25.0",
+    "mypy>=1.10,<2.0",
+    "pre-commit>=3.7,<4.0",
+    "types-python-dateutil",
+]
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["packages", "apps"]
+
+# ---- Tooling ---------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["build", "dist", ".venv", "artifacts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+ignore = ["E501"]  # line-length handled by black
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+# Third-party libs without stubs
+[[tool.mypy.overrides]]
+module = [
+    "akshare.*",
+    "yfinance.*",
+    "vectorbt.*",
+    "lightgbm.*",
+    "mlflow.*",
+    "minio.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = [
+    "integration: requires docker-compose stack",
+    "replay: historical replay tests (slow)",
+    "golden: golden dataset regression tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["packages", "apps"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

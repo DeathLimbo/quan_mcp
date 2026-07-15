@@ -1,0 +1,6 @@
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600519","date":"2024-01-02","o":"1700.00","h":"1720.00","l":"1690.00","c":"1710.00","v":"1000000"}
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600519","date":"2024-01-03","o":"1710.00","h":"1730.00","l":"1700.00","c":"1725.00","v":"1200000"}
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600519","date":"2024-01-04","halted":true,"note":"regulatory halt"}
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600519","date":"2024-01-05","o":"1897.50","h":"1897.50","l":"1897.50","c":"1897.50","v":"800000","note":"up-limit lock at open (+10% from prior close 1725)"}
+{"type":"order","instrument_id":"CN.SSE.EQUITY.600519","side":"BUY","qty":100,"submit_date":"2024-01-04","note":"should NoFill (halted)"}
+{"type":"order","instrument_id":"CN.SSE.EQUITY.600519","side":"BUY","qty":100,"submit_date":"2024-01-05","note":"should NoFill (up-limit lock)"}

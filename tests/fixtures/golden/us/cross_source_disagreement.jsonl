@@ -1,0 +1,6 @@
+{"type": "primary", "instrument_id": "US.NASDAQ.EQUITY.AAPL", "date": "2024-06-03", "c": "195.00"}
+{"type": "primary", "instrument_id": "US.NASDAQ.EQUITY.AAPL", "date": "2024-06-04", "c": "196.50"}
+{"type": "primary", "instrument_id": "US.NASDAQ.EQUITY.AAPL", "date": "2024-06-05", "c": "198.00"}
+{"type": "secondary", "instrument_id": "US.NASDAQ.EQUITY.AAPL", "date": "2024-06-03", "c": "194.99", "note": "1bps off — within tolerance"}
+{"type": "secondary", "instrument_id": "US.NASDAQ.EQUITY.AAPL", "date": "2024-06-04", "c": "196.55", "note": "3bps off — within tolerance"}
+{"type": "secondary", "instrument_id": "US.NASDAQ.EQUITY.AAPL", "date": "2024-06-05", "c": "204.00", "note": "300bps disagreement — ERROR"}

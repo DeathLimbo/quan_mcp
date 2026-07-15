@@ -1,0 +1,4 @@
+{"type":"bar","instrument_id":"US.NASDAQ.EQUITY.OLDCO","date":"2024-06-10","o":"5.10","h":"5.20","l":"5.05","c":"5.15","v":"100000"}
+{"type":"bar","instrument_id":"US.NASDAQ.EQUITY.OLDCO","date":"2024-06-11","o":"5.15","h":"5.16","l":"5.10","c":"5.11","v":"50000","last_trade":true,"note":"final trading day before delisting"}
+{"type":"action","instrument_id":"US.NASDAQ.EQUITY.OLDCO","ex_date":"2024-06-12","kind":"DELIST","note":"venue removal"}
+{"type":"order","instrument_id":"US.NASDAQ.EQUITY.OLDCO","side":"BUY","qty":10,"submit_date":"2024-06-12","note":"should NoFill (delisted)"}

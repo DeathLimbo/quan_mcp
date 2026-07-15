@@ -1,0 +1,5 @@
+{"type":"bar","instrument_id":"US.NASDAQ.EQUITY.AAPL","date":"2024-03-08","event_time_utc":"2024-03-08T21:00:00Z","note":"EST session close 16:00 ET == 21:00 UTC pre-DST"}
+{"type":"bar","instrument_id":"US.NASDAQ.EQUITY.AAPL","date":"2024-03-11","event_time_utc":"2024-03-11T20:00:00Z","note":"EDT session close 16:00 ET == 20:00 UTC post-DST spring forward"}
+{"type":"bar","instrument_id":"US.NASDAQ.EQUITY.AAPL","date":"2024-11-01","event_time_utc":"2024-11-01T20:00:00Z","note":"EDT last day before fall-back"}
+{"type":"bar","instrument_id":"US.NASDAQ.EQUITY.AAPL","date":"2024-11-04","event_time_utc":"2024-11-04T21:00:00Z","note":"EST first day, session close shifts +1h in UTC"}
+{"type":"bar","instrument_id":"US.NASDAQ.EQUITY.AAPL","date":"2024-11-29","event_time_utc":"2024-11-29T18:00:00Z","closed_early":true,"note":"Black Friday early close 13:00 ET"}

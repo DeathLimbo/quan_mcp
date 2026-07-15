@@ -1,0 +1,6 @@
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600000","date":"2024-05-27","o":"10.00","h":"10.20","l":"9.90","c":"10.00","v":"5000000"}
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600000","date":"2024-05-28","o":"5.02","h":"5.10","l":"4.95","c":"5.05","v":"7000000","note":"post 2-for-1 split, raw prices halved"}
+{"type":"action","instrument_id":"CN.SSE.EQUITY.600000","ex_date":"2024-05-28","kind":"SPLIT","ratio":"2"}
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600036","date":"2024-06-10","o":"35.00","h":"35.20","l":"34.90","c":"35.00","v":"3000000"}
+{"type":"bar","instrument_id":"CN.SSE.EQUITY.600036","date":"2024-06-11","o":"33.50","h":"33.70","l":"33.30","c":"33.60","v":"3500000","note":"ex-div: 1.50 CNY per share"}
+{"type":"action","instrument_id":"CN.SSE.EQUITY.600036","ex_date":"2024-06-11","kind":"DIVIDEND","dps":"1.50"}

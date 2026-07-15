@@ -1,0 +1,19 @@
+extends: base.yaml
+app:
+  env: dev
+  log_level: DEBUG
+database:
+  url: ${DATABASE_URL}
+redis:
+  url: ${REDIS_URL}
+object_store:
+  endpoint: ${S3_ENDPOINT}
+  region: ${S3_REGION}
+  access_key: ${S3_ACCESS_KEY}
+  secret_key: ${S3_SECRET_KEY}
+  buckets:
+    raw: ${S3_BUCKET_RAW}
+    artifact: ${S3_BUCKET_ARTIFACT}
+    report: ${S3_BUCKET_REPORT}
+mlflow:
+  tracking_uri: ${MLFLOW_TRACKING_URI}

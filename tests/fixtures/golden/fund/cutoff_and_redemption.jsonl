@@ -1,0 +1,6 @@
+{"type":"nav","instrument_id":"CN.CN_FUND.FUND.110022","nav_date":"2024-06-10","nav":"1.2345","note":"published T+1 morning"}
+{"type":"nav","instrument_id":"CN.CN_FUND.FUND.110022","nav_date":"2024-06-11","nav":"1.2410"}
+{"type":"order","instrument_id":"CN.CN_FUND.FUND.110022","side":"BUY","qty":1000,"submit_date":"2024-06-10","submit_hour":14,"note":"before 15:00 cutoff — settles at 2024-06-10 NAV"}
+{"type":"order","instrument_id":"CN.CN_FUND.FUND.110022","side":"BUY","qty":1000,"submit_date":"2024-06-10","submit_hour":16,"note":"after 15:00 cutoff — settles at 2024-06-11 NAV"}
+{"type":"order","instrument_id":"CN.CN_FUND.FUND.110022","side":"SELL","qty":500,"submit_date":"2024-06-10","submit_hour":10,"holding_days":5,"note":"redemption fee bracket 150 bps (< 7 days)"}
+{"type":"order","instrument_id":"CN.CN_FUND.FUND.110022","side":"SELL","qty":500,"submit_date":"2024-06-10","submit_hour":10,"holding_days":40,"note":"redemption fee bracket 25 bps (>=30 days)"}

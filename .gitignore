@@ -1,0 +1,46 @@
+# Byte-compiled / build artefacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Test / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Data / artefacts (should live in object storage, not the repo)
+artifacts/
+data/
+raw/
+mlruns/
+*.parquet
+*.duckdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+.qoder/
+
+# Secrets / local infra
+docker-compose.override.yml
+*.pem
+*.key
