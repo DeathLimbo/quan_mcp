@@ -132,8 +132,16 @@ def _train_raw(b, universe, features, model_id, fund_ctx=None):
 
 
 def _get_or_train_model(sql_reg, b, model_id, market, universe, features,
-                        fund_ctx=None, force_retrain=False):
-    """Load cached PRODUCTION model from DB; train+persist only if absent or --retrain."""
+                        fund_ctx=None, force_retrain=False,
+                        promote_approval_id=None):
+    """Load cached PRODUCTION model from DB. If absent (or --retrain): train and
+    register as DRAFT only — NEVER auto-promote to PRODUCTION (issue #10 Phase 1:
+    LLM/scripts cannot self-promote; needs explicit --promote-approval-id).
+
+    Returns the artifact if a PRODUCTION version is available (loaded or just
+    promoted); returns None if only a DRAFT exists (fail-closed: that universe
+    produces no forecasts until a human approves promotion).
+    """
     if not force_retrain:
         rec, artifact = sql_reg.get_latest_production(model_id)
         if artifact is not None:
@@ -150,11 +158,25 @@ def _get_or_train_model(sql_reg, b, model_id, market, universe, features,
         state=ModelState.DRAFT, created_at=utcnow(),
         approved_by=None, approval_id=None, metrics={}, notes="auto daily train")
     sql_reg.register(rec, artifact=model, metrics={"train_rows": float(n)})
-    sql_reg.transition(model_id, model.version, ModelState.PRODUCTION,
-                       actor="daily_forecast@auto", approval_id="auto_daily",
-                       metrics={"train_rows": float(n)})
-    print(f"    trained {n} rows → PRODUCTION {model_id}@{model.version[:8]} (persisted)")
-    return model
+    if promote_approval_id:
+        # Explicit human approval — walk the legal DRAFT→CANDIDATE→PRODUCTION path
+        # through the shared validate_transition (promotion gate evidence is a
+        # placeholder until Phase 2 wires real candidate-vs-baseline gates).
+        from types import SimpleNamespace
+        gate = SimpleNamespace(passed=True, losses=())
+        sql_reg.transition(model_id, model.version, ModelState.CANDIDATE,
+                           actor="daily_forecast@auto")
+        sql_reg.transition(model_id, model.version, ModelState.PRODUCTION,
+                           actor="daily_forecast@auto",
+                           approval_id=promote_approval_id,
+                           promotion_gate=gate,
+                           metrics={"train_rows": float(n)})
+        print(f"    trained {n} rows → PRODUCTION {model_id}@{model.version[:8]} "
+              f"(approval_id={promote_approval_id})")
+        return model
+    print(f"    trained {n} rows → DRAFT {model_id}@{model.version[:8]} "
+          f"(NOT promoted; needs --promote-approval-id for PRODUCTION)")
+    return None
 
 
 def _latest_forecast(b, model, universe, features, fund_ctx=None):
@@ -176,7 +198,6 @@ def _latest_forecast(b, model, universe, features, fund_ctx=None):
         latest = max(rows, key=lambda r: r.as_of_date)
         try:
             ret = model.predict_return(latest.features)
-            conf = float(model.predict_one(latest.features).score)
         except Exception:
             continue
         if ret is None:  # not a regression model — skip
@@ -188,7 +209,12 @@ def _latest_forecast(b, model, universe, features, fund_ctx=None):
             "name": FUND_NAMES.get(iid.canonical(), iid.symbol),
             "market": iid.market.value,
             "expected_return": float(ret),
-            "confidence": conf,
+            # Regression models are NOT calibrated direction probabilities —
+            # logistic(raw_return) is not a valid probability (issue #10 Phase 1).
+            # Leave None until a calibrated classifier / isotonic calibration is
+            # wired (Phase 2+). Do NOT label this "置信度".
+            "direction_probability": None,
+            "prediction_interval": None,  # Phase 3: bootstrap or quantile model
             "as_of": latest.as_of_date.isoformat(),
             "last_close": float(last_bar.close),
         })
@@ -201,18 +227,20 @@ def _render_html(top10, meta, out_path):
     for i, f in enumerate(top10, 1):
         ret = f["expected_return"]
         ret_pct = f"{ret*100:+.2f}%"
-        conf = f["confidence"]
+        dp = f.get("direction_probability")
         # Chinese convention: red = bullish (positive return), green = bearish
         color = "#d32f2f" if ret > 0 else ("#2e7d32" if ret < 0 else "#757575")
         direction = "看涨" if ret > 0 else ("看跌" if ret < 0 else "中性")
-        conf_bar = f"{conf*100:.0f}%"
+        # direction_probability is None for uncalibrated regression models (issue #10):
+        # logistic(raw_return) is NOT a valid probability. Show "—" until calibrated.
+        dp_cell = f"{dp*100:.0f}%" if dp is not None else "—"
         rows_html.append(
             f"<tr><td>{i}</td><td><b>{html.escape(f['short'])}</b><br>"
             f"<span class='sub'>{html.escape(f['name'])}</span></td>"
             f"<td>{f['market']}</td>"
             f"<td class='ret' style='color:{color}'>{ret_pct}</td>"
             f"<td style='color:{color}'>{direction}</td>"
-            f"<td>{conf_bar}</td>"
+            f"<td>{dp_cell}</td>"
             f"<td>{f['as_of']}</td>"
             f"<td>{f['last_close']:.4f}</td></tr>")
     models_html = "".join(
@@ -240,14 +268,14 @@ ul{{margin:6px 0;padding-left:20px}}
 <h1>🦫 每日 Top-10 收益预测</h1>
 <div class="meta">生成于 {when} · horizon {HORIZON}d · 回归模型预测预期收益率 · 三模型融合排序</div>
 <table>
-<tr><th>#</th><th>标的</th><th>市场</th><th>预期收益率</th><th>方向</th><th>置信度</th><th>数据日</th><th>最新收盘</th></tr>
+<tr><th>#</th><th>标的</th><th>市场</th><th>预期收益率</th><th>方向</th><th>方向概率</th><th>数据日</th><th>最新收盘</th></tr>
 {"".join(rows_html)}
 </table>
 <div class="foot">
 <b>模型：</b><ul>{models_html}</ul>
 <b>预测窗口：</b>未来 {HORIZON} 个交易日预期收益率（回归模型直接输出幅度，非仅方向）。
 <b>排序：</b>CN A股 + 美股 + 持仓基金 三 universe 预测合并，按预期收益率降序取前 10。
-<b>置信度：</b>方向概率（涨的概率），辅助判断信号强度。
+<b>方向概率：</b>校准后的涨概率（分类模型或 isotonic 校准提供）。回归模型未校准，显示"—"（issue #10：logistic(收益)≠概率，禁止当置信度）。
 <b>持久化：</b>模型存 model_registry 表 + 磁盘 artifact，跨运行累积；每日加载缓存模型（秒级），仅无缓存或 --retrain 时重训。
 </div>
 <div class="disclaimer">⚠️ 量化预测仅供研究参考，不构成投资建议。模型基于历史数据，可能因市场结构变化失效。
@@ -267,6 +295,9 @@ def main() -> int:
     ap.add_argument("--market", default="all", choices=["all", "cn", "us", "fund"])
     ap.add_argument("--retrain", action="store_true",
                     help="force retrain even if a cached PRODUCTION model exists")
+    ap.add_argument("--promote-approval-id", default=None,
+                    help="explicit human approval id to promote a freshly trained "
+                         "DRAFT model to PRODUCTION (issue #10 Phase 1: no auto-promotion)")
     args = ap.parse_args()
 
     dbm = _load_module("dbb", "apps/quant-read-mcp/db_backends.py")
@@ -284,7 +315,8 @@ def main() -> int:
     if args.market in ("all", "cn"):
         print("  CN A-shares:")
         m = _get_or_train_model(sql_reg, b, "cn_equity_reg20d", Market.CN,
-                                CN_A_EQUITIES, CN_FEATURES, fund_ctx, args.retrain)
+                                CN_A_EQUITIES, CN_FEATURES, fund_ctx, args.retrain,
+                                promote_approval_id=args.promote_approval_id)
         if m:
             fc = _latest_forecast(b, m, CN_A_EQUITIES, CN_FEATURES, fund_ctx)
             for f in fc: f["model"] = "cn_equity_reg20d"
@@ -295,7 +327,8 @@ def main() -> int:
     if args.market in ("all", "us"):
         print("  US equities:")
         m = _get_or_train_model(sql_reg, b, "us_equity_reg20d", Market.US,
-                                US_EQUITIES, PV_FEATURES, None, args.retrain)
+                                US_EQUITIES, PV_FEATURES, None, args.retrain,
+                                promote_approval_id=args.promote_approval_id)
         if m:
             fc = _latest_forecast(b, m, US_EQUITIES, PV_FEATURES)
             for f in fc: f["model"] = "us_equity_reg20d"
@@ -306,7 +339,8 @@ def main() -> int:
     if args.market in ("all", "fund"):
         print("  Funds:")
         m = _get_or_train_model(sql_reg, b, "fund_nav_reg20d", Market.CN,
-                                FUNDS, PV_FEATURES, None, args.retrain)
+                                FUNDS, PV_FEATURES, None, args.retrain,
+                                promote_approval_id=args.promote_approval_id)
         if m:
             fc = _latest_forecast(b, m, FUNDS, PV_FEATURES)
             for f in fc: f["model"] = "fund_nav_reg20d"
@@ -317,8 +351,31 @@ def main() -> int:
     fund_conn.close()
 
     if not all_fc:
-        print("ERROR: no forecasts produced", file=sys.stderr)
-        return 2
+        # Fail-closed (issue #10 Phase 1): no PRODUCTION model available → emit a
+        # NO_FORECAST report instead of producing unvalidated predictions. A human
+        # must run with --retrain --promote-approval-id <id> to establish PRODUCTION.
+        print("FAIL-CLOSED: no PRODUCTION model available for any universe.")
+        print("  To establish one: --retrain --promote-approval-id <your-approval-id>")
+        when = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M 北京")
+        out = args.out or str(
+            Path("/Users/xxx/Workbuddy/Claw/华尔街之狼/reports") /
+            f"{end.isoformat()}_top10_forecast.html")
+        out = os.path.normpath(out)
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        drafts = ", ".join(m["id"] for m in models_meta) or "无"
+        Path(out).write_text(
+            f"<!DOCTYPE html><html lang='zh'><head><meta charset='utf-8'>"
+            f"<title>Top-10 — {end}</title></head><body style='font-family:sans-serif;padding:40px'>"
+            f"<h1>FAIL-CLOSED：无合格生产模型</h1>"
+            f"<p>生成于 {when}</p>"
+            f"<p>当前无任何 universe 存在 PRODUCTION 策略版本。按 issue #10 Phase 1 "
+            f"fail-closed 原则，不输出未验证预测。</p>"
+            f"<p>已训练的 DRAFT 模型（待人工审批晋级）：{drafts}</p>"
+            f"<p>要建立 PRODUCTION，请运行：<code>--retrain --promote-approval-id "
+            f"&lt;你的审批id&gt;</code>（人工显式授权晋级）。</p>"
+            f"</body></html>", encoding="utf-8")
+        print(f"HTML: {out}")
+        return 0
 
     all_fc.sort(key=lambda x: x["expected_return"], reverse=True)
     top10 = all_fc[:10]
@@ -327,8 +384,10 @@ def main() -> int:
     print(f"TOP 10 by expected {HORIZON}d return (of {len(all_fc)} forecasts)")
     print("=" * 64)
     for i, f in enumerate(top10, 1):
+        dp = f.get("direction_probability")
+        dp_str = f"{dp*100:.0f}%" if dp is not None else "—"
         print(f"  {i:2d}. {f['short']:8s} {f['name'][:22]:22s} "
-              f"{f['expected_return']*100:+6.2f}%  conf {f['confidence']*100:4.0f}%  "
+              f"{f['expected_return']*100:+6.2f}%  dirprob {dp_str:>4}  "
               f"[{f['market']}]  as_of={f['as_of']}")
 
     out = args.out or str(

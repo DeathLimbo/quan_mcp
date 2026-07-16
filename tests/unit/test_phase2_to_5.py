@@ -101,6 +101,9 @@ def test_registry_state_machine_requires_approval_for_production():
 
 
 def test_registry_per_market_horizon_production_unique():
+    """Per-model_id PRODUCTION uniqueness (issue #10 Phase 1): a model_id may
+    have only one PRODUCTION version; different model_ids may coexist under
+    the same (market, horizon) — e.g. CN A-share vs CN fund-NAV models."""
     reg = InMemoryModelRegistry()
     for i in (1, 2):
         rec = ModelRecord(
@@ -110,11 +113,22 @@ def test_registry_per_market_horizon_production_unique():
         )
         reg.register(rec)
         reg.transition(f"m{i}", "v1", ModelState.CANDIDATE, actor="ops")
+    # m1 and m2 are different model_ids — both can be PRODUCTION under same market.
     reg.transition("m1", "v1", ModelState.PRODUCTION, actor="ops",
                    approval_id="APR-1", promotion_gate=_passing_gate("m1@v1"))
+    reg.transition("m2", "v1", ModelState.PRODUCTION, actor="ops",
+                   approval_id="APR-2", promotion_gate=_passing_gate("m2@v1"))
+    # Same model_id m1, new version v2 — must be rejected (m1 already has v1 PRODUCTION).
+    rec_v2 = ModelRecord(
+        model_id="m1", version="v2", market=Market.US, horizon_days=5,
+        feature_set_hash="abc", state=ModelState.DRAFT,
+        created_at=datetime.now(timezone.utc), approved_by=None, approval_id=None,
+    )
+    reg.register(rec_v2)
+    reg.transition("m1", "v2", ModelState.CANDIDATE, actor="ops")
     with pytest.raises(ModelTransitionError, match="already has PRODUCTION"):
-        reg.transition("m2", "v1", ModelState.PRODUCTION, actor="ops",
-                       approval_id="APR-2", promotion_gate=_passing_gate("m2@v1"))
+        reg.transition("m1", "v2", ModelState.PRODUCTION, actor="ops",
+                       approval_id="APR-3", promotion_gate=_passing_gate("m1@v2"))
 
 
 # ---- Inference NO_FORECAST -------------------------------------------------

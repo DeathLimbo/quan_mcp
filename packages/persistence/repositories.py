@@ -21,7 +21,7 @@ import sqlalchemy as sa
 
 from packages.common.instrument_id import Market
 from packages.inference.service import Forecast, NoForecast
-from packages.models.registry import ModelRecord, ModelState
+from packages.models.registry import ModelTransitionError, ModelRecord, ModelState, validate_transition
 
 _metadata = sa.MetaData()
 
@@ -299,24 +299,39 @@ class SqlModelRegistry:
 
     def transition(self, model_id: str, version: str, to: ModelState, *,
                    actor: str, approval_id: str | None = None,
+                   promotion_gate: "object | None" = None,
                    metrics: dict[str, float] | None = None) -> ModelRecord:
+        """State transition via the shared pure domain rule + optimistic-lock
+        compare-and-set. The SQL path can no longer bypass the state machine,
+        promotion gate, or approval requirements (issue #10 Phase 1)."""
+        rec = self.get(model_id, version)
+        if rec is None:
+            raise KeyError(f"unknown model {model_id}@{version}")
+        _ex_rec, _ = (self.get_latest_production(rec.model_id)
+                      if to is ModelState.PRODUCTION else (None, None))
+        existing = _ex_rec
+        validate_transition(rec, to, promotion_gate=promotion_gate,
+                            approval_id=approval_id,
+                            existing_production=existing)
+        vals: dict[str, Any] = {"state": to.value}
+        if to is ModelState.PRODUCTION:
+            vals["approved_by"] = actor
+            vals["approval_id"] = approval_id
+        if metrics:
+            vals["metrics_json"] = json.dumps(metrics)
+        # compare_and_set: only updates if state still equals rec.state (optimistic
+        # lock). rowcount==0 means a concurrent modification won the race.
         with self._engine.begin() as conn:
-            row = conn.execute(sa.select(model_registry_t).where(
+            result = conn.execute(sa.update(model_registry_t).where(
                 model_registry_t.c.model_id == model_id,
                 model_registry_t.c.version == version,
-            )).first()
-            if row is None:
-                raise KeyError(f"unknown model {model_id}@{version}")
-            vals: dict[str, Any] = {"state": to.value}
-            if to is ModelState.PRODUCTION:
-                vals["approved_by"] = actor
-                vals["approval_id"] = approval_id
-            if metrics:
-                vals["metrics_json"] = json.dumps(metrics)
-            conn.execute(sa.update(model_registry_t).where(
-                model_registry_t.c.model_id == model_id,
-                model_registry_t.c.version == version,
+                model_registry_t.c.state == rec.state.value,
             ).values(**vals))
+            if result.rowcount == 0:
+                raise ModelTransitionError(
+                    f"concurrent modification: {model_id}@{version} state changed "
+                    f"(expected {rec.state.value})"
+                )
         return self.get(model_id, version)
 
     def get(self, model_id: str, version: str) -> ModelRecord | None:

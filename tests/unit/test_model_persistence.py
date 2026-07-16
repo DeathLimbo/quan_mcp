@@ -96,8 +96,12 @@ def test_sql_model_registry_persists_and_reloads_artifact(tmp_path: Path):
     assert got.market is Market.CN
     assert got.metrics.get("train_rows") == 200.0
 
+    from types import SimpleNamespace
+    reg.transition("sqltest", m.version, ModelState.CANDIDATE, actor="tester")
     reg.transition("sqltest", m.version, ModelState.PRODUCTION,
-                   actor="tester", approval_id="apr1", metrics={"ic": 0.12})
+                   actor="tester", approval_id="apr1",
+                   promotion_gate=SimpleNamespace(passed=True, losses=()),
+                   metrics={"ic": 0.12})
 
     prod = reg.get_production(Market.CN, 20)
     assert prod is not None
@@ -128,8 +132,11 @@ def test_sql_model_registry_latest_production_distinguishes_model_ids(tmp_path: 
                           approved_by=None, approval_id=None, metrics={},
                           notes=None)
         reg.register(rec, artifact=m)
+        from types import SimpleNamespace
+        reg.transition(mid, m.version, ModelState.CANDIDATE, actor="t")
         reg.transition(mid, m.version, ModelState.PRODUCTION,
-                       actor="t", approval_id="a")
+                       actor="t", approval_id="a",
+                       promotion_gate=SimpleNamespace(passed=True, losses=()))
 
     # get_production(market,horizon) returns just the newest — ambiguous for
     # two same-market models. get_latest_production(model_id) disambiguates:
