@@ -189,6 +189,26 @@ def evaluation_get_summary(model_id: str, window_id: str) -> dict:
     return _tools.evaluation_get_summary(model_id, window_id)
 
 
+@mcp.tool()
+def instrument_admission_check(instrument_id: str, horizon_days: int = 20,
+                               min_history: int = 200) -> dict:
+    """New-instrument admission gate (issue #8). Call before forecast_run on a
+    new fund/equity — checks resolve + data coverage + model applicability."""
+    return _tools.instrument_admission_check(
+        instrument_id, horizon_days=horizon_days, min_history=min_history)
+
+
+@mcp.tool()
+def return_target_evaluate(period: str, return_target: float,
+                           max_drawdown: float | None = None,
+                           asset_type: str | None = None) -> dict:
+    """Target-return feasibility gate (issue #9). Classifies a return target;
+    never promises a return (TARGET_NOT_FEASIBLE / RESEARCH_ONLY / FEASIBLE)."""
+    return _tools.return_target_evaluate(
+        period=period, return_target=return_target,
+        max_drawdown=max_drawdown, asset_type=asset_type)
+
+
 def main() -> None:
     """Run the MCP server on stdio."""
     mcp.run()

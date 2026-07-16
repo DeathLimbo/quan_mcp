@@ -265,6 +265,66 @@ def release_kill_switch(actor: str, approval_id: str) -> dict:
     return _tools.release_kill_switch(actor=actor, approval_id=approval_id)
 
 
+@mcp.tool()
+def strategy_propose_change(strategy_id: str, parent_version: str | None,
+                            proposed_parameters: dict, proposed_factor_refs: list,
+                            rationale: str, actor_id: str,
+                            actor_type: str = "agent") -> dict:
+    """Issue #10 Phase 2: file a strategy change proposal (LLM-safe)."""
+    return _tools.strategy_propose_change(
+        strategy_id=strategy_id, parent_version=parent_version,
+        proposed_parameters=proposed_parameters,
+        proposed_factor_refs=proposed_factor_refs, rationale=rationale,
+        actor_id=actor_id, actor_type=actor_type)
+
+
+@mcp.tool()
+def strategy_get_version(strategy_id: str, version: str) -> dict:
+    """Issue #10: read a strategy version's full detail."""
+    return _tools.strategy_get_version(strategy_id=strategy_id, version=version)
+
+
+@mcp.tool()
+def strategy_get_production(strategy_id: str) -> dict:
+    """Issue #10: read the current PRODUCTION strategy version."""
+    return _tools.strategy_get_production(strategy_id=strategy_id)
+
+
+@mcp.tool()
+def strategy_list_versions(strategy_id: str) -> dict:
+    """Issue #10: list all versions of a strategy."""
+    return _tools.strategy_list_versions(strategy_id=strategy_id)
+
+
+@mcp.tool()
+def strategy_diff_versions(strategy_id: str, parent_version: str | None,
+                           child_version: str) -> dict:
+    """Issue #10: readable parameter diff between two versions."""
+    return _tools.strategy_diff_versions(
+        strategy_id=strategy_id, parent_version=parent_version,
+        child_version=child_version)
+
+
+@mcp.tool()
+def strategy_list_change_requests(strategy_id: str) -> dict:
+    """Issue #10: list change requests for a strategy."""
+    return _tools.strategy_list_change_requests(strategy_id=strategy_id)
+
+
+@mcp.tool()
+def strategy_list_evaluations(strategy_id: str, version: str) -> dict:
+    """Issue #10: list evaluation runs for a strategy version."""
+    return _tools.strategy_list_evaluations(
+        strategy_id=strategy_id, version=version)
+
+
+@mcp.tool()
+def strategy_get_audit_trail(strategy_id: str, version: str) -> dict:
+    """Issue #10: promotion-decision audit trail for a strategy version."""
+    return _tools.strategy_get_audit_trail(
+        strategy_id=strategy_id, version=version)
+
+
 def main() -> None:
     """Run the MCP server on stdio."""
     mcp.run()
