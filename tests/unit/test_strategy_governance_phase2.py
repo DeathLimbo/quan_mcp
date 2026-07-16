@@ -88,7 +88,7 @@ def _completed_eval(sid: str = "s1", version: str = "v1") -> EvaluationRun:
     return EvaluationRun(
         run_id="er1", strategy_id=sid, version=version,
         status=EvaluationStatus.COMPLETED, window_start="2023-01-01",
-        window_end="2024-01-01", regime_slices=("bull",), metrics={"ic": 0.12},
+        window_end="2024-01-01", regime_slices=("bull",), metrics={"ic": 0.12, "baseline_gate": 1.0},
     )
 
 
@@ -233,7 +233,7 @@ def test_llm_cannot_self_promote_to_production():
                    decided_by="ops")
     svc.record_evaluation(strategy_id="s1", version="v1",
                           window_start="2023-01-01", window_end="2024-01-01",
-                          regime_slices=("bull",), metrics={"ic": 0.12})
+                          regime_slices=("bull",), metrics={"ic": 0.12, "baseline_gate": 1.0})
     svc.transition(strategy_id="s1", version="v1", to=StrategyState.BACKTESTED,
                    decided_by="ops")
     svc.transition(strategy_id="s1", version="v1", to=StrategyState.SHADOW,
@@ -370,7 +370,7 @@ def test_concurrent_promotion_only_one_succeeds():
                    decided_by="ops")
     svc.record_evaluation(strategy_id="race", version="v1",
                           window_start="2023-01-01", window_end="2024-01-01",
-                          regime_slices=("bull",), metrics={"ic": 0.12})
+                          regime_slices=("bull",), metrics={"ic": 0.12, "baseline_gate": 1.0})
     svc.transition(strategy_id="race", version="v1", to=StrategyState.BACKTESTED,
                    decided_by="ops")
     svc.transition(strategy_id="race", version="v1", to=StrategyState.SHADOW,
@@ -427,7 +427,7 @@ def test_rollback_retires_production():
                    decided_by="ops")
     svc.record_evaluation(strategy_id="rb", version="v1",
                           window_start="2023-01-01", window_end="2024-01-01",
-                          regime_slices=("bull",), metrics={"ic": 0.1})
+                          regime_slices=("bull",), metrics={"ic": 0.1, "baseline_gate": 1.0})
     svc.transition(strategy_id="rb", version="v1", to=StrategyState.BACKTESTED,
                    decided_by="ops")
     svc.transition(strategy_id="rb", version="v1", to=StrategyState.SHADOW,

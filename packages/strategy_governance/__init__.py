@@ -15,6 +15,12 @@ from packages.strategy_governance.domain import (
     StrategyState,
     StrategyVersion,
 )
+from packages.strategy_governance.evaluator import (
+    EvaluationResult,
+    StrategyEvaluator,
+    WalkForwardFold,
+    classify_regime,
+)
 from packages.strategy_governance.errors import (
     EvaluationMissingError,
     IllegalTransitionError,
@@ -34,6 +40,7 @@ from packages.strategy_governance.policy import (
 __all__ = [
     "ChangeRequest",
     "ChangeRequestStatus",
+    "EvaluationResult",
     "EvaluationRun",
     "EvaluationStatus",
     "EvaluationMissingError",
@@ -44,11 +51,14 @@ __all__ = [
     "PromotionDecision",
     "PromotionOutcome",
     "SchemaValidationError",
+    "StrategyEvaluator",
     "StrategyGovernanceError",
     "StrategyState",
     "StrategyVersion",
     "UnapprovedPromotionError",
     "VersionExistsError",
+    "WalkForwardFold",
+    "classify_regime",
     "compute_change_diff",
     "validate_parameter_schema",
     "validate_transition",

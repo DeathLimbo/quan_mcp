@@ -12,10 +12,11 @@ so the audit trail answers "who changed what, when, why".
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Sequence
 
 from packages.audit.record import AuditEvent, AuditSink
 from packages.common.time_utils import utcnow
+from packages.data_sources.contracts import Bar
 from packages.strategy_governance.domain import (
     ChangeRequest,
     ChangeRequestStatus,
@@ -26,6 +27,10 @@ from packages.strategy_governance.domain import (
     PromotionOutcome,
     StrategyState,
     StrategyVersion,
+)
+from packages.strategy_governance.evaluator import (
+    EvaluationResult,
+    StrategyEvaluator,
 )
 from packages.strategy_governance.errors import (
     IllegalTransitionError,
@@ -63,6 +68,7 @@ class StrategyGovernanceService:
         decisions: PromotionDecisionRepository,
         audit: AuditSink,
         schemas: dict[str, dict[str, ParamSpec]],
+        evaluators: dict[str, StrategyEvaluator] | None = None,
     ) -> None:
         self._v = versions
         self._cr = change_requests
@@ -70,6 +76,8 @@ class StrategyGovernanceService:
         self._pd = decisions
         self._audit = audit
         self._schemas = schemas
+        # Phase 3: per-strategy walk-forward evaluators (issue #10 §11).
+        self._evaluators = evaluators or {}
 
     # ------------------------------------------------------------------ #
     # Propose (LLM/human may call)
@@ -234,6 +242,62 @@ class StrategyGovernanceService:
         return run
 
     # ------------------------------------------------------------------ #
+    # Phase 3: run the wired walk-forward evaluator (issue #10 §11)
+    # ------------------------------------------------------------------ #
+    def evaluate(
+        self,
+        *,
+        strategy_id: str,
+        version: str,
+        bars: Sequence[Bar],
+        baseline_metrics: dict[str, dict[str, float]] | None = None,
+        gate_keys: tuple[str, ...] = ("ic", "net_return"),
+    ) -> tuple[EvaluationRun, EvaluationResult]:
+        """Run the wired walk-forward evaluator and persist the result.
+
+        Returns (EvaluationRun, EvaluationResult). The EvaluationRun.metrics
+        carries ``baseline_gate`` (1.0/0.0) so the SHADOW transition can gate
+        on 'candidate beat baselines' (§81.1).
+        """
+        evaluator = self._evaluators.get(strategy_id)
+        if evaluator is None:
+            raise StrategyGovernanceError(
+                f"no evaluator wired for strategy {strategy_id!r}"
+            )
+        vobj = self._v.get(strategy_id, version)
+        if vobj is None:
+            raise StrategyGovernanceError(
+                f"unknown strategy version {strategy_id}@{version}"
+            )
+        result = evaluator.evaluate(
+            bars, strategy_id=strategy_id, version=version,
+            params=vobj.parameter_set.values,
+            baseline_metrics=baseline_metrics, gate_keys=gate_keys,
+        )
+        metrics = result.as_metrics()
+        if result.baseline_gate_passed is not None:
+            metrics["baseline_gate"] = 1.0 if result.baseline_gate_passed else 0.0
+        run = EvaluationRun(
+            run_id=f"er_{uuid.uuid4().hex[:12]}",
+            strategy_id=strategy_id, version=version,
+            status=EvaluationStatus.COMPLETED,
+            window_start=result.folds[0].test_start if result.folds else "",
+            window_end=result.folds[-1].test_end if result.folds else "",
+            regime_slices=tuple(sorted(result.regime_ic.keys())),
+            metrics=metrics, started_by="evaluator",
+            completed_at=utcnow(), repro_hash=result.repro_hash,
+        )
+        self._er.save(run)
+        self._audit.insert(self._event(
+            "evaluator", "service", "strategy.evaluation.completed",
+            resource_id=run.run_id, resource_type="evaluation_run",
+            metadata={"strategy_id": strategy_id, "version": version,
+                      "ic": result.ic, "n_folds": result.n_folds,
+                      "baseline_gate_passed": result.baseline_gate_passed},
+        ))
+        return run, result
+
+    # ------------------------------------------------------------------ #
     # THE single transition entry point
     # ------------------------------------------------------------------ #
     def transition(
@@ -270,6 +334,18 @@ class StrategyGovernanceService:
             current, to,
             evaluation_runs=runs, approval_id=approval_id, gate_passed=gate_passed,
         )
+
+        # 1b. Phase 3 baseline gate for SHADOW (§81.1): the candidate must have
+        # beaten baselines on its latest walk-forward eval. The eval's metrics
+        # carry baseline_gate (1.0=passed); absent/failed = fail-closed.
+        if to is StrategyState.SHADOW and runs:
+            latest = runs[0]   # list_for_version returns newest-first
+            if latest.metrics.get("baseline_gate", 0.0) < 1.0:
+                raise StrategyGovernanceError(
+                    f"{strategy_id}@{version} -> SHADOW blocked: candidate did "
+                    f"not beat baselines (baseline_gate="
+                    f"{latest.metrics.get('baseline_gate')!r})"
+                )
 
         # 2. optimistic-lock state change
         ok = self._v.compare_and_set_state(
