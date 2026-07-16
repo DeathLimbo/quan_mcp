@@ -13,5 +13,11 @@ in later without changing callers.
 from packages.portfolio.builder import (
     PortfolioConfig, PortfolioTarget, build_portfolio,
 )
+from packages.portfolio.target import (
+    ReturnTargetAssessment, TargetStatus, evaluate_return_target,
+)
 
-__all__ = ["PortfolioConfig", "PortfolioTarget", "build_portfolio"]
+__all__ = [
+    "PortfolioConfig", "PortfolioTarget", "build_portfolio",
+    "ReturnTargetAssessment", "TargetStatus", "evaluate_return_target",
+]
