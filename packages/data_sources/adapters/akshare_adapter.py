@@ -96,6 +96,16 @@ class AkshareAdapter(MarketDataAdapter):
                                      start_date=start.strftime("%Y%m%d"),
                                      end_date=end.strftime("%Y%m%d"),
                                      adjust=ak_adjust)
+        elif instrument_id.asset_type is AssetType.FUND:
+            # Open-end funds (incl. QDII) only publish NAV, not OHLCV.
+            # Map NAV to a degenerate bar (O=H=L=C=NAV, volume=0).
+            nav_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+            yield from self._fund_nav_to_bars(nav_df, instrument_id, start, end)
+            return
+        elif instrument_id.asset_type is AssetType.INDEX:
+            # CN indices via akshare index daily.
+            idx_symbol = code if code.startswith(("sh", "sz")) else f"sh{code}"
+            df = ak.stock_zh_index_daily(symbol=idx_symbol)
         else:
             raise NotImplementedError(
                 f"akshare daily bars for {instrument_id.asset_type} not wired yet"
@@ -146,6 +156,42 @@ class AkshareAdapter(MarketDataAdapter):
                 volume=Decimal(str(row[col["vol"]])),
                 turnover=Decimal(str(row[col["amt"]])) if col["amt"] in df.columns else None,
                 adj_factor=Decimal("1"),   # akshare pre-adjusts; factor==1
+                available_at_utc=event + self._eod_lag,
+                source=self.adapter_id,
+                calendar_version=self.calendar_version,
+                rule_version=self.rule_version,
+                source_version=self.source_version,
+                license_tag=self.license_tag,
+                quality_status="NORMAL",
+            )
+
+    def _fund_nav_to_bars(self, df, iid: InstrumentId,
+                          start: date, end: date) -> Iterator[Bar]:
+        """Map open-end fund NAV rows (单位净值) to degenerate Bars.
+
+        Funds publish a single NAV per day — no OHLCV. We set
+        O=H=L=C=NAV and volume=0 so the fund can flow through the same
+        Bar-based feature / backtest / inference pipeline as equities.
+        """
+        if df is None or df.empty:
+            return iter(())
+        col_date = next((c for c in df.columns if c in ("净值日期", "date")), "净值日期")
+        col_nav = next((c for c in df.columns if c in ("单位净值", "nav")), "单位净值")
+        for _, row in df.iterrows():
+            d_raw = row[col_date]
+            local_date = d_raw if isinstance(d_raw, date) else date.fromisoformat(str(d_raw)[:10])
+            if local_date < start or local_date > end:
+                continue
+            nav = Decimal(str(row[col_nav]))
+            event = _cn_session_close_utc(local_date)
+            yield Bar(
+                instrument_id=iid,
+                event_time_utc=event,
+                market_local_date=local_date,
+                open=nav, high=nav, low=nav, close=nav,
+                volume=Decimal("0"),
+                turnover=None,
+                adj_factor=Decimal("1"),
                 available_at_utc=event + self._eod_lag,
                 source=self.adapter_id,
                 calendar_version=self.calendar_version,
