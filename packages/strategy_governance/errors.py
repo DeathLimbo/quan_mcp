@@ -32,3 +32,11 @@ class ImmutableVersionError(StrategyGovernanceError):
 
 class EvaluationMissingError(StrategyGovernanceError):
     """A promotion gate requires an EvaluationRun that does not exist."""
+
+
+class FactorLeakageError(StrategyGovernanceError):
+    """A factor was used at an as_of date before it became available (PIT leak)."""
+
+
+class FactorDependencyError(StrategyGovernanceError):
+    """A factor's declared dependency is missing or unavailable."""

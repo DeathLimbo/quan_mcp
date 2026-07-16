@@ -9,6 +9,8 @@ from packages.strategy_governance.domain import (
     ChangeRequestStatus,
     EvaluationRun,
     EvaluationStatus,
+    FactorState,
+    FactorVersion,
     ParameterSetVersion,
     PromotionDecision,
     PromotionOutcome,
@@ -23,6 +25,8 @@ from packages.strategy_governance.evaluator import (
 )
 from packages.strategy_governance.errors import (
     EvaluationMissingError,
+    FactorDependencyError,
+    FactorLeakageError,
     IllegalTransitionError,
     ImmutableVersionError,
     SchemaValidationError,
@@ -33,6 +37,9 @@ from packages.strategy_governance.errors import (
 from packages.strategy_governance.policy import (
     ParamSpec,
     compute_change_diff,
+    filter_available_factors,
+    validate_factor_availability,
+    validate_factor_dependencies,
     validate_parameter_schema,
     validate_transition,
 )
@@ -44,6 +51,10 @@ __all__ = [
     "EvaluationRun",
     "EvaluationStatus",
     "EvaluationMissingError",
+    "FactorDependencyError",
+    "FactorLeakageError",
+    "FactorState",
+    "FactorVersion",
     "IllegalTransitionError",
     "ImmutableVersionError",
     "ParameterSetVersion",
@@ -60,6 +71,9 @@ __all__ = [
     "WalkForwardFold",
     "classify_regime",
     "compute_change_diff",
+    "filter_available_factors",
+    "validate_factor_availability",
+    "validate_factor_dependencies",
     "validate_parameter_schema",
     "validate_transition",
 ]

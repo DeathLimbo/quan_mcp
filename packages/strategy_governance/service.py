@@ -12,6 +12,7 @@ so the audit trail answers "who changed what, when, why".
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Any, Sequence
 
 from packages.audit.record import AuditEvent, AuditSink
@@ -22,6 +23,8 @@ from packages.strategy_governance.domain import (
     ChangeRequestStatus,
     EvaluationRun,
     EvaluationStatus,
+    FactorState,
+    FactorVersion,
     ParameterSetVersion,
     PromotionDecision,
     PromotionOutcome,
@@ -39,12 +42,15 @@ from packages.strategy_governance.errors import (
 from packages.strategy_governance.policy import (
     ParamSpec,
     compute_change_diff,
+    filter_available_factors,
+    validate_factor_availability,
     validate_parameter_schema,
     validate_transition,
 )
 from packages.strategy_governance.repositories import (
     ChangeRequestRepository,
     EvaluationRunRepository,
+    FactorVersionRepository,
     PromotionDecisionRepository,
     StrategyVersionRepository,
 )
@@ -69,6 +75,7 @@ class StrategyGovernanceService:
         audit: AuditSink,
         schemas: dict[str, dict[str, ParamSpec]],
         evaluators: dict[str, StrategyEvaluator] | None = None,
+        factors: "FactorVersionRepository | None" = None,
     ) -> None:
         self._v = versions
         self._cr = change_requests
@@ -78,6 +85,8 @@ class StrategyGovernanceService:
         self._schemas = schemas
         # Phase 3: per-strategy walk-forward evaluators (issue #10 §11).
         self._evaluators = evaluators or {}
+        # Phase 4: factor governance (issue #10 §11).
+        self._factors = factors
 
     # ------------------------------------------------------------------ #
     # Propose (LLM/human may call)
@@ -252,6 +261,7 @@ class StrategyGovernanceService:
         bars: Sequence[Bar],
         baseline_metrics: dict[str, dict[str, float]] | None = None,
         gate_keys: tuple[str, ...] = ("ic", "net_return"),
+        factor_versions: list[FactorVersion] | None = None,
     ) -> tuple[EvaluationRun, EvaluationResult]:
         """Run the wired walk-forward evaluator and persist the result.
 
@@ -273,6 +283,7 @@ class StrategyGovernanceService:
             bars, strategy_id=strategy_id, version=version,
             params=vobj.parameter_set.values,
             baseline_metrics=baseline_metrics, gate_keys=gate_keys,
+            factor_versions=factor_versions,
         )
         metrics = result.as_metrics()
         if result.baseline_gate_passed is not None:
@@ -448,6 +459,119 @@ class StrategyGovernanceService:
         return compute_change_diff(
             parent.parameter_set if parent else None, child.parameter_set,
         )
+
+    # ------------------------------------------------------------------ #
+    # Phase 4: factor governance (issue #10 §11)
+    # ------------------------------------------------------------------ #
+    def _require_factors(self) -> "FactorVersionRepository":
+        if self._factors is None:
+            raise StrategyGovernanceError(
+                "factor governance not wired on this service"
+            )
+        return self._factors
+
+    def register_factor(
+        self,
+        *,
+        factor_id: str,
+        version: str,
+        definition_hash: str,
+        available_from: "date",
+        dependencies: tuple[str, ...] = (),
+        description: str = "",
+        created_by: str = "system",
+    ) -> FactorVersion:
+        """Register an immutable factor version with PIT availability.
+
+        ``available_from`` is the date from which this factor's data exists;
+        using it at an earlier as_of is a future-function leak rejected by
+        the policy layer and the evaluator's per-fold filter.
+        """
+        fr = self._require_factors()
+        factor = FactorVersion(
+            factor_id=factor_id, version=version,
+            definition_hash=definition_hash, available_from=available_from,
+            dependencies=dependencies, description=description,
+            state=FactorState.ACTIVE, created_by=created_by,
+        )
+        fr.save(factor)
+        self._audit.insert(self._event(
+            created_by, "service", "factor.registered",
+            resource_id=f"{factor_id}@{version}", resource_type="factor_version",
+            metadata={"available_from": available_from.isoformat(),
+                      "dependencies": list(dependencies)},
+        ))
+        return factor
+
+    def retire_factor(self, *, factor_id: str, version: str,
+                      decided_by: str, reason: str) -> bool:
+        """Retire a factor (ACTIVE -> RETIRED). Future evaluations will not
+        use it. Returns True if the CAS succeeded."""
+        fr = self._require_factors()
+        ok = fr.retire(factor_id, version)
+        self._audit.insert(self._event(
+            decided_by, "service", "factor.retired",
+            resource_id=f"{factor_id}@{version}", resource_type="factor_version",
+            metadata={"reason": reason, "ok": ok},
+        ))
+        return ok
+
+    def list_factors(self) -> list[FactorVersion]:
+        fr = self._require_factors()
+        return fr.list_all_active()
+
+    def get_available_factors(self, as_of: "date") -> list[FactorVersion]:
+        """PIT filter: all ACTIVE factors whose data exists at ``as_of``."""
+        fr = self._require_factors()
+        return fr.list_available_at(as_of)
+
+    def check_factor_leakage(
+        self,
+        *,
+        as_of: "date",
+        factor_ids: list[str],
+    ) -> list[str]:
+        """Return the subset of ``factor_ids`` that would LEAK at ``as_of``
+        (i.e. their available_from > as_of). Empty list = clean."""
+        fr = self._require_factors()
+        available = {f.factor_id for f in fr.list_available_at(as_of)}
+        return [fid for fid in factor_ids if fid not in available]
+
+    def check_incremental_contribution(
+        self,
+        *,
+        strategy_id: str,
+        version: str,
+        bars: Sequence[Bar],
+        factor_id: str,
+        factor_versions: list[FactorVersion],
+    ) -> dict[str, Any]:
+        """Measure a factor's incremental IC: full set vs set-minus-factor.
+
+        Runs the wired evaluator twice (with and without ``factor_id``) and
+        returns the IC delta. A negative delta means the factor HURTS — it
+        should not be registered / should be retired.
+        """
+        evaluator = self._evaluators.get(strategy_id)
+        if evaluator is None:
+            raise StrategyGovernanceError(
+                f"no evaluator wired for strategy {strategy_id!r}"
+            )
+        full = evaluator.evaluate(
+            bars, strategy_id=strategy_id, version=version,
+            factor_versions=factor_versions,
+        )
+        without = [f for f in factor_versions if f.factor_id != factor_id]
+        reduced = evaluator.evaluate(
+            bars, strategy_id=strategy_id, version=version,
+            factor_versions=without,
+        )
+        return {
+            "factor_id": factor_id,
+            "ic_full": full.ic,
+            "ic_without": reduced.ic,
+            "incremental_ic": full.ic - reduced.ic,
+        }
 
     # ------------------------------------------------------------------ #
     # helpers

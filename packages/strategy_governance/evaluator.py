@@ -36,6 +36,8 @@ from packages.data_sources.contracts import Bar
 from packages.datasets.builder import build_dataset
 from packages.evaluation.metrics import information_coefficient
 from packages.evaluation.promotion import beats_all_baselines
+from packages.strategy_governance.domain import FactorVersion
+from packages.strategy_governance.policy import filter_available_factors
 from packages.training.lightgbm_trainer import LightGBMTrainer
 
 
@@ -161,11 +163,17 @@ class StrategyEvaluator:
         params: dict[str, Any] | None = None,
         baseline_metrics: dict[str, dict[str, float]] | None = None,
         gate_keys: tuple[str, ...] = ("ic", "net_return"),
+        factor_versions: list[FactorVersion] | None = None,
     ) -> EvaluationResult:
         """Run nested walk-forward. Returns aggregate metrics + per-fold detail.
 
         ``baseline_metrics`` maps baseline_id -> {metric: value}; if supplied,
         the candidate must beat every baseline on every gate key (§81.1).
+
+        ``factor_versions`` enables Phase 4 PIT filtering: each fold trains
+        only on features whose ``available_from <= fold_train_end``. A factor
+        not yet available at a fold's training window is excluded — preventing
+        future-function leakage.
         """
         step = self.step or self.horizon_days
         params = params or {}
@@ -186,18 +194,36 @@ class StrategyEvaluator:
         regime_actuals: dict[str, list[float]] = {"bull": [], "bear": [], "range": []}
 
         T = self.train_min
-        trainer = LightGBMTrainer(
-            feature_names=list(self.feature_names),
-            horizon_days=self.horizon_days,
-            task="regression",
-            num_boost_round=self.num_boost_round,
-        )
         fold_idx = 0
         while T + self.horizon_days <= len(rows):
             train_rows = rows[:T]
             test_rows = rows[T:T + self.horizon_days]
             if len(train_rows) < self.train_min or len(test_rows) < 2:
                 break
+
+            # Phase 4: fold-level PIT filter — only train on features that
+            # were available at this fold's training-window end. A factor
+            # whose available_from > fold_train_end is a future-function leak.
+            if factor_versions is not None:
+                fold_as_of = train_rows[-1].as_of_date
+                available = filter_available_factors(factor_versions, fold_as_of)
+                avail_ids = {f.factor_id for f in available}
+                fold_features = [fn for fn in self.feature_names
+                                 if fn in avail_ids]
+                if len(fold_features) < 2:
+                    # too few usable features at this fold's PIT -> skip
+                    T += step
+                    fold_idx += 1
+                    continue
+            else:
+                fold_features = list(self.feature_names)
+
+            trainer = LightGBMTrainer(
+                feature_names=fold_features,
+                horizon_days=self.horizon_days,
+                task="regression",
+                num_boost_round=self.num_boost_round,
+            )
             try:
                 model = trainer.fit(
                     train_rows, model_id=f"{strategy_id}_wf",

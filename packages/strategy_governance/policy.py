@@ -5,17 +5,22 @@ layer calls these and is forbidden from inlining its own rules.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from packages.strategy_governance.domain import (
     EvaluationRun,
     EvaluationStatus,
+    FactorState,
+    FactorVersion,
     ParameterSetVersion,
     StrategyState,
     StrategyVersion,
 )
 from packages.strategy_governance.errors import (
     EvaluationMissingError,
+    FactorDependencyError,
+    FactorLeakageError,
     IllegalTransitionError,
     SchemaValidationError,
     UnapprovedPromotionError,
@@ -219,3 +224,48 @@ def compute_change_diff(
     if not lines:
         lines.append("(no parameter changes)")
     return lines
+
+
+# --------------------------------------------------------------------------- #
+# Factor governance (Phase 4, issue #10 §11): PIT availability + leakage guards
+# --------------------------------------------------------------------------- #
+def validate_factor_availability(factor: FactorVersion, as_of: date) -> None:
+    """Reject if the factor is not yet available at ``as_of`` (PIT leak).
+
+    Using a factor whose data only exists from ``available_from`` at an
+    earlier ``as_of`` is a future-function leak — the model would be trained
+    on data that did not exist at decision time.
+    """
+    if factor.available_from > as_of:
+        raise FactorLeakageError(
+            f"factor {factor.factor_id}@{factor.version} available_from "
+            f"{factor.available_from} > as_of {as_of} (future-function leak)"
+        )
+
+
+def validate_factor_dependencies(
+    factor: FactorVersion,
+    available_factor_ids: set[str],
+) -> None:
+    """Reject if a declared dependency is not in the available set."""
+    missing = [d for d in factor.dependencies if d not in available_factor_ids]
+    if missing:
+        raise FactorDependencyError(
+            f"factor {factor.factor_id}@{factor.version} has unavailable "
+            f"dependencies: {missing}"
+        )
+
+
+def filter_available_factors(
+    factors: list[FactorVersion],
+    as_of: date,
+) -> list[FactorVersion]:
+    """Return only factors that are (a) ACTIVE and (b) available at ``as_of``.
+
+    This is the PIT filter applied per walk-forward fold: a fold whose
+    training window ends at T may only use factors with available_from <= T.
+    """
+    return [
+        f for f in factors
+        if f.state == FactorState.ACTIVE and f.available_from <= as_of
+    ]

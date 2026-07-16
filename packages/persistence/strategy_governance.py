@@ -7,7 +7,7 @@ exists, so concurrent promotions lose loudly.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import sqlalchemy as sa
@@ -19,6 +19,8 @@ from packages.strategy_governance.domain import (
     ChangeRequestStatus,
     EvaluationRun,
     EvaluationStatus,
+    FactorState,
+    FactorVersion,
     ParameterSetVersion,
     PromotionDecision,
     PromotionOutcome,
@@ -107,10 +109,37 @@ promotion_decision_t = sa.Table(
     sa.Column("reason", sa.Text, nullable=True),
 )
 
+factor_version_t = sa.Table(
+    "factor_version", _metadata,
+    sa.Column("factor_id", sa.String(64), nullable=False),
+    sa.Column("version", sa.String(32), nullable=False),
+    sa.Column("definition_hash", sa.String(64), nullable=False),
+    sa.Column("available_from", sa.Date, nullable=False),
+    sa.Column("dependencies_json", sa.Text, nullable=False),
+    sa.Column("description", sa.Text, nullable=False, server_default=""),
+    sa.Column("state", sa.String(16), nullable=False, server_default="ACTIVE"),
+    sa.Column("created_by", sa.String(128), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.PrimaryKeyConstraint("factor_id", "version"),
+)
+
 
 # --------------------------------------------------------------------------- #
 # Serialization helpers (row <-> domain entity)
 # --------------------------------------------------------------------------- #
+def _row_to_factor_version(row: Any) -> FactorVersion:
+    m = row._mapping
+    return FactorVersion(
+        factor_id=m["factor_id"], version=m["version"],
+        definition_hash=m["definition_hash"],
+        available_from=m["available_from"],
+        dependencies=tuple(json.loads(m["dependencies_json"])),
+        description=m["description"],
+        state=FactorState(m["state"]),
+        created_by=m["created_by"], created_at=m["created_at"],
+    )
+
+
 def _row_to_param_set(row: Any) -> ParameterSetVersion:
     m = row._mapping
     return ParameterSetVersion(
@@ -468,3 +497,69 @@ class SqlPromotionDecisionRepository:
                 reason=m["reason"],
             ))
         return out
+
+
+class SqlFactorVersionRepository:
+    """Factor governance storage (Phase 4). Immutable except ``state``
+    (ACTIVE/RETIRED via ``retire`` CAS)."""
+
+    def __init__(self, engine: sa.Engine) -> None:
+        self._engine = engine
+
+    def get(self, factor_id: str, version: str) -> FactorVersion | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(sa.select(factor_version_t).where(
+                factor_version_t.c.factor_id == factor_id,
+                factor_version_t.c.version == version,
+            )).first()
+        return _row_to_factor_version(row) if row else None
+
+    def save(self, factor: FactorVersion) -> None:
+        with self._engine.begin() as conn:
+            try:
+                conn.execute(sa.insert(factor_version_t).values(
+                    factor_id=factor.factor_id, version=factor.version,
+                    definition_hash=factor.definition_hash,
+                    available_from=factor.available_from,
+                    dependencies_json=json.dumps(list(factor.dependencies)),
+                    description=factor.description,
+                    state=factor.state.value,
+                    created_by=factor.created_by, created_at=factor.created_at,
+                ))
+            except sa.exc.IntegrityError:
+                pass  # idempotent re-save of immutable version
+
+    def list_by_factor(self, factor_id: str) -> list[FactorVersion]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(sa.select(factor_version_t).where(
+                factor_version_t.c.factor_id == factor_id
+            ).order_by(factor_version_t.c.available_from.desc())).all()
+        return [_row_to_factor_version(r) for r in rows]
+
+    def list_available_at(self, as_of: date) -> list[FactorVersion]:
+        """All ACTIVE factors whose data exists at ``as_of`` (PIT filter)."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(sa.select(factor_version_t).where(
+                factor_version_t.c.state == FactorState.ACTIVE.value,
+                factor_version_t.c.available_from <= as_of,
+            ).order_by(factor_version_t.c.factor_id)).all()
+        return [_row_to_factor_version(r) for r in rows]
+
+    def retire(self, factor_id: str, version: str) -> bool:
+        """CAS state ACTIVE -> RETIRED. Returns True on success."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                sa.update(factor_version_t).where(
+                    factor_version_t.c.factor_id == factor_id,
+                    factor_version_t.c.version == version,
+                    factor_version_t.c.state == FactorState.ACTIVE.value,
+                ).values(state=FactorState.RETIRED.value)
+            )
+            return result.rowcount == 1
+
+    def list_all_active(self) -> list[FactorVersion]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(sa.select(factor_version_t).where(
+                factor_version_t.c.state == FactorState.ACTIVE.value
+            ).order_by(factor_version_t.c.factor_id)).all()
+        return [_row_to_factor_version(r) for r in rows]

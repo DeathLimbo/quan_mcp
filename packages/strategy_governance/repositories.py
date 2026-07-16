@@ -7,11 +7,13 @@ than silently overwriting each other (issue #10 §5, §12 concurrency test).
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Protocol
 
 from packages.strategy_governance.domain import (
     ChangeRequest,
     EvaluationRun,
+    FactorVersion,
     ParameterSetVersion,
     PromotionDecision,
     StrategyState,
@@ -73,3 +75,12 @@ class PromotionDecisionRepository(Protocol):
     def save(self, decision: PromotionDecision) -> None: ...
     def list_for_version(self, strategy_id: str,
                          version: str) -> list[PromotionDecision]: ...
+
+
+class FactorVersionRepository(Protocol):
+    def get(self, factor_id: str, version: str) -> FactorVersion | None: ...
+    def save(self, factor: FactorVersion) -> None: ...
+    def list_by_factor(self, factor_id: str) -> list[FactorVersion]: ...
+    def list_available_at(self, as_of: date) -> list[FactorVersion]: ...
+    def list_all_active(self) -> list[FactorVersion]: ...
+    def retire(self, factor_id: str, version: str) -> bool: ...

@@ -14,7 +14,7 @@ PRODUCTION additionally requires a human approval_id.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
@@ -208,3 +208,35 @@ class PromotionDecision:
     approval_id: str | None   # required when to_state == PRODUCTION
     decided_at: datetime = field(default_factory=utcnow)
     reason: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Factor governance (Phase 4, issue #10 §11)
+# --------------------------------------------------------------------------- #
+class FactorState(str, Enum):
+    ACTIVE = "ACTIVE"
+    RETIRED = "RETIRED"
+
+
+@dataclass(frozen=True, slots=True)
+class FactorVersion:
+    """An immutable factor version with point-in-time availability.
+
+    ``available_from`` is the date from which this factor's data exists and is
+    consumable. Using the factor at any ``as_of < available_from`` is a
+    future-leak and is rejected by policy.validate_factor_availability.
+
+    ``dependencies`` lists factor_ids that must themselves be available at
+    ``as_of`` for this factor to be usable (e.g. a composite factor built on
+    raw returns depends on the raw-return factor).
+    """
+
+    factor_id: str
+    version: str
+    definition_hash: str          # hash of the factor's definition (immutable)
+    available_from: date          # PIT: factor data exists from this date
+    dependencies: tuple[str, ...] = ()
+    description: str = ""
+    state: FactorState = FactorState.ACTIVE
+    created_by: str = "system"
+    created_at: datetime = field(default_factory=utcnow)
