@@ -71,8 +71,8 @@ def _read_tools(**overrides):
 
 # ---- read MCP tests --------------------------------------------------------
 
-def test_read_manifest_has_16_tools():
-    assert len(read_mcp.TOOL_MANIFEST) == 16
+def test_read_manifest_has_17_tools():
+    assert len(read_mcp.TOOL_MANIFEST) == 17
     names = {t["name"] for t in read_mcp.TOOL_MANIFEST}
     expected = {
         "data_get_status", "instrument_resolve", "market_get_status",
@@ -80,6 +80,7 @@ def test_read_manifest_has_16_tools():
         "portfolio_get_snapshot", "portfolio_get_exposures",
         "model_get_production",
         "forecast_run", "screen_run", "portfolio_create_proposal",
+        "return_target_evaluate",
         "risk_evaluate_proposal", "risk_run_scenario",
         "prediction_record", "report_get_payload", "evaluation_get_summary",
     }
@@ -136,6 +137,23 @@ def test_read_portfolio_create_proposal_normalises():
     weights = r["data"]["weights"]
     total = sum(weights.values())
     assert 0.0 < total <= 1.0
+
+
+def test_read_return_target_evaluate_rejects_monthly_ten_percent_fund_target():
+    t = _read_tools()
+    r = t.return_target_evaluate(
+        target_return=0.10,
+        horizon_days=30,
+        asset_type="FUND",
+        share_class="C",
+    )
+
+    assert r["ok"] is True
+    assert r["data"]["status"] == "TARGET_NOT_FEASIBLE"
+    assert r["data"]["recommendation_allowed"] is False
+    assert r["data"]["research_only"] is True
+    assert r["data"]["max_candidate_weight"] == 0.0
+    assert "target:monthly_10pct_extreme" in r["data"]["reasons"]
 
 
 def test_read_risk_evaluate_proposal_approved():
