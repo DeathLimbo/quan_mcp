@@ -113,12 +113,15 @@ def _err_of(code: str, message: str) -> dict:
 
 
 class AdminTools:
-    def __init__(self, *, registry: InMemoryModelRegistry, audit: AuditLog) -> None:
+    def __init__(self, *, registry: InMemoryModelRegistry, audit: AuditLog,
+                 job_store: "SqlJobStore | None" = None) -> None:
         self._registry = registry
         self._audit = audit
         self._kill_switch = False
         self._jobs: dict[str, Job] = {}
         self._pending_promotions: dict[str, PendingPromotion] = {}
+        # issue #3: durable job state — when wired, jobs survive restart.
+        self._job_store = job_store
 
     # ---- 1-5: long-running job creators -----------------------------------
 
@@ -131,6 +134,11 @@ class AdminTools:
             payload=payload,
         )
         self._jobs[job.job_id] = job
+        if self._job_store is not None:
+            import json
+            self._job_store.create(
+                job_id=job.job_id, kind=job.job_type.value,
+                payload_json=json.dumps(payload, default=str))
         _audit(self._audit, actor=actor, action=f"job.create.{job_type.value.lower()}",
                resource_type="job", resource_id=job.job_id,
                metadata={"payload_keys": list(payload.keys())})
@@ -180,6 +188,18 @@ class AdminTools:
 
     def job_get_status(self, *, job_id: str) -> dict:
         job = self._jobs.get(job_id)
+        # issue #3: restart recovery — rehydrate from durable store if missing
+        if job is None and self._job_store is not None:
+            row = self._job_store.get(job_id)
+            if row is not None:
+                job = Job(
+                    job_id=row["job_id"],
+                    job_type=JobType(row["kind"]),
+                    status=JobStatus(row["status"]),
+                    created_at=row["created_at_utc"],
+                    payload={},
+                )
+                self._jobs[job_id] = job
         if job is None:
             return _err_of("UNKNOWN_INSTRUMENT", f"unknown job {job_id!r}")
         return ok({"job_id": job.job_id, "job_type": job.job_type.value,
@@ -192,6 +212,12 @@ class AdminTools:
         """Test/ops helper — flip a job's status."""
         job = self._jobs[job_id]
         self._jobs[job_id] = replace(job, status=status, result=result)
+        # issue #3: mirror to durable store so status survives restart
+        if self._job_store is not None:
+            import json
+            self._job_store.update(
+                job_id, status=status.value,
+                result_json=json.dumps(result, default=str) if result else None)
 
     # ---- 7: model_compare -------------------------------------------------
 
