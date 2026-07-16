@@ -309,6 +309,58 @@ class ReadTools:
                    "market": iid.market.value, "bars": len(bars),
                    "model": f"{prod.model_id}@{prod.version}"})
 
+    # ---- 10c: return_target_evaluate (issue #9) ---------------------------
+    def return_target_evaluate(
+        self, *, period: str, return_target: float,
+        max_drawdown: float | None = None, asset_type: str | None = None,
+    ) -> dict:
+        """Feasibility gate for target-return requests (issue #9).
+
+        The system NEVER promises a return. It classifies the target and
+        returns a verdict:
+          - TARGET_NOT_FEASIBLE: annualized > 100% (e.g. monthly 10% -> ~214%)
+            — no model/portfolio can credibly target this; refuse to plan.
+          - RESEARCH_ONLY: annualized 30-100% — aggressive; candidates may be
+            researched but NO trade is placed.
+          - FEASIBLE: annualized <= 30% — proceed to forecast/portfolio/risk
+            with NO return promise, only expected ranges + failure conditions.
+        Every response carries a disclaimer forbidding 'guarantee' language.
+        """
+        if period == "monthly":
+            annual = (1.0 + return_target) ** 12 - 1.0
+        elif period == "annual":
+            annual = return_target
+        else:
+            return err_str("UNSUPPORTED_HORIZON",
+                           f"unknown period {period!r} (use monthly/annual)")
+
+        if annual > 1.0:
+            verdict = "TARGET_NOT_FEASIBLE"
+            detail = (f"annualized target {annual:.1%} exceeds 100% — no model "
+                      f"or portfolio can credibly target this; refusing to plan")
+        elif annual > 0.30:
+            verdict = "RESEARCH_ONLY"
+            detail = (f"annualized target {annual:.1%} is aggressive — "
+                      f"candidates may be researched but NO trade will be placed")
+        else:
+            verdict = "FEASIBLE"
+            detail = (f"annualized target {annual:.1%} within research range — "
+                      f"proceed to forecast/portfolio/risk with NO return promise")
+
+        return ok({
+            "verdict": verdict,
+            "annualized_target": annual,
+            "period": period,
+            "return_target": return_target,
+            "max_drawdown": max_drawdown,
+            "asset_type": asset_type,
+            "detail": detail,
+            "disclaimer": ("No return is guaranteed. Outputs are research "
+                           "candidates with expected ranges and failure "
+                           "conditions, not promises. Past performance does "
+                           "not predict future results."),
+        })
+
     # ---- 11: portfolio_create_proposal ------------------------------------
 
     def portfolio_create_proposal(self, scores: dict[str, float],
