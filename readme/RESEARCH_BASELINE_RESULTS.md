@@ -1,4 +1,13 @@
-# 研究基线结论 — 扩充 universe + 5 年长历史 (task #35)
+# 研究基线结论 — 扩充 universe + 5 年长历史 + 基本面特征 (task #35-#38)
+
+## 重大发现：基本面特征 × 20 天 horizon = IC 0.19（可交易 edge）
+
+| horizon | 基本面 | OOS IC | hit_rate | verdict |
+|---|---|---|---|---|
+| 5d | 无 | 0.0136 | 51.19% | marginal |
+| 5d | 有(PE/PB/ROE) | 0.0136 | 51.19% | marginal（基本面在短期无效）|
+| 20d | 无 | 0.0202 | 51.31% | marginal（horizon 本身无帮助）|
+| **20d** | **有** | **0.1892** | **58.67%** | **positive edge → shadow/PRODUCTION** ✅ |
 
 ## 实验配置
 - **数据**：1825 天（5 年）真实数据，37 标的（akshare 25385 条 + yfinance 17542 条 = 42927 条）
