@@ -14,6 +14,7 @@ error (by design, spec §93) — the server still starts and exposes every tool.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -24,11 +25,15 @@ from packages.models.registry import InMemoryModelRegistry
 
 # The package directory uses a hyphen (quant-read-mcp) which is not a valid
 # Python identifier, so we load tools.py by file path — same trick the test
-# suite uses (tests/unit/test_mcp_surface.py).
+# suite uses (tests/unit/test_mcp_surface.py). The module MUST be registered
+# in sys.modules before exec so dataclasses with field()/KW_ONLY can resolve
+# ``cls.__module__`` (CPython dataclasses._is_type looks it up there).
 _HERE = Path(__file__).resolve().parent
-_spec = importlib.util.spec_from_file_location("_qrmc_tools", _HERE / "tools.py")
+_mod_name = "_qrmc_tools"
+_spec = importlib.util.spec_from_file_location(_mod_name, _HERE / "tools.py")
 assert _spec and _spec.loader, "could not load tools.py"
 _tools_mod = importlib.util.module_from_spec(_spec)
+sys.modules[_mod_name] = _tools_mod
 _spec.loader.exec_module(_tools_mod)
 ReadTools = _tools_mod.ReadTools
 
