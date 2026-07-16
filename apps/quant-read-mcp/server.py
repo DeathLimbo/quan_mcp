@@ -65,7 +65,7 @@ def _build_default_tools() -> ReadTools:
         backends = _db_mod.make_db_backends(db_url)
         return ReadTools(registry=reg, featureset=fs, **backends)
 
-    def _bars(_iid, _start, _end):
+    def _bars(_iid, _start, _end, as_of_utc=None):
         return []
 
     def _instr(_iid):

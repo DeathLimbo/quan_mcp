@@ -244,7 +244,8 @@ class ReadTools:
                      horizon_days: int) -> dict:
         iid = parse_instrument_id(instrument_id)
         as_of_utc = ensure_utc(as_of)
-        bars = self._bar_lookup(iid, date(1970, 1, 1), as_of_utc.date())
+        bars = self._bar_lookup(iid, date(1970, 1, 1), as_of_utc.date(),
+                                as_of_utc=as_of_utc)
         result = self._inference.score(
             instrument_id=iid, as_of=as_of_utc,
             horizon_days=horizon_days, bars=bars,
@@ -263,7 +264,8 @@ class ReadTools:
         skipped: list[dict[str, Any]] = []
         for id_str in instrument_ids:
             iid = parse_instrument_id(id_str)
-            bars = self._bar_lookup(iid, date(1970, 1, 1), as_of_utc.date())
+            bars = self._bar_lookup(iid, date(1970, 1, 1), as_of_utc.date(),
+                                    as_of_utc=as_of_utc)
             r = self._inference.score(instrument_id=iid, as_of=as_of_utc,
                                        horizon_days=horizon_days, bars=bars)
             if isinstance(r, Forecast):
@@ -366,9 +368,9 @@ def _build_ctx(iid: InstrumentId, side: int, quantity: float, ref_price: float,
         instrument_id=iid,
         trade_date=kwargs.get("trade_date") or date.today(),
         side=side, quantity=quantity, ref_price=ref_price,
-        user_permissions=frozenset(
-            kwargs.get("user_permissions") or [f"trade:{iid.market.value}"]
-        ),
+        # issue #4: never grant trade permission by default. Missing
+        # permissions → empty frozenset → _l1_permission REJECTs PERM_DENIED.
+        user_permissions=frozenset(kwargs.get("user_permissions") or []),
         prev_close=kwargs.get("prev_close"),
         avg_volume_20d=kwargs.get("avg_volume_20d"),
         exposure_frac_current=kwargs.get("exposure_frac_current", 0.0),

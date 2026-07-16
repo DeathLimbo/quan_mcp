@@ -18,6 +18,7 @@ env/
 
 # Test / coverage
 .pytest_cache/
+.pytest_tmp/        # local scratch basetemp for sandboxed/Windows runs (issue #7)
 .mypy_cache/
 .ruff_cache/
 htmlcov/

@@ -105,10 +105,11 @@ def make_db_backends(database_url: str) -> dict[str, Any]:
             "status": row["status"],
         }
 
-    def bar_lookup(iid: InstrumentId, start: date, end: date) -> list[Bar]:
+    def bar_lookup(iid: InstrumentId, start: date, end: date,
+                   as_of_utc: datetime | None = None) -> list[Bar]:
         with psycopg.connect(url, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
-                cur.execute(
+                sql = (
                     "SELECT instrument_id, market_local_date, event_time_utc,"
                     " open, high, low, close, volume, turnover, adj_factor,"
                     " available_at_utc, source, calendar_version, rule_version,"
@@ -116,9 +117,16 @@ def make_db_backends(database_url: str) -> dict[str, Any]:
                     " FROM market_bar"
                     " WHERE instrument_id = %s"
                     "   AND market_local_date BETWEEN %s AND %s"
-                    " ORDER BY market_local_date",
-                    (iid.canonical(), start, end),
                 )
+                params: list[Any] = [iid.canonical(), start, end]
+                if as_of_utc is not None:
+                    # Point-in-time filter (spec §38 数据 + issue #1): never
+                    # read a bar whose available_at_utc is after the request
+                    # as_of, and skip bars not fit for downstream inference.
+                    sql += "   AND available_at_utc <= %s"
+                    params.append(as_of_utc)
+                sql += " ORDER BY market_local_date"
+                cur.execute(sql, params)
                 rows = cur.fetchall()
         bars: list[Bar] = []
         for r in rows:
