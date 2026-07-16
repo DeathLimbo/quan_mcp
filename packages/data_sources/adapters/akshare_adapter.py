@@ -86,11 +86,14 @@ class AkshareAdapter(MarketDataAdapter):
         code = instrument_id.symbol
         ak_adjust = {"none": "", "forward": "qfq", "backward": "hfq"}[adjust]
         if instrument_id.asset_type is AssetType.EQUITY:
-            df = ak.stock_zh_a_hist(symbol=code,
-                                    period="daily",
-                                    start_date=start.strftime("%Y%m%d"),
-                                    end_date=end.strftime("%Y%m%d"),
-                                    adjust=ak_adjust)
+            # Use the sina source (stock_zh_a_daily) — more stable than the
+            # eastmoney push2his endpoint which is rate-limited / proxy-hostile.
+            # sina needs a sh/sz prefix on the 6-digit code.
+            sina_sym = self._sina_symbol(code, instrument_id.venue)
+            df = ak.stock_zh_a_daily(symbol=sina_sym,
+                                     start_date=start.strftime("%Y%m%d"),
+                                     end_date=end.strftime("%Y%m%d"),
+                                     adjust=ak_adjust)
         elif instrument_id.asset_type is AssetType.ETF:
             df = ak.fund_etf_hist_em(symbol=code, period="daily",
                                      start_date=start.strftime("%Y%m%d"),
@@ -126,6 +129,15 @@ class AkshareAdapter(MarketDataAdapter):
             return Venue.BSE
         # Default to SSE; caller may override via a curated alias table.
         return Venue.SSE
+
+    @staticmethod
+    def _sina_symbol(code: str, venue: Venue) -> str:
+        """Prefix a 6-digit CN A-share code for the sina data source."""
+        if venue is Venue.SZSE:
+            return f"sz{code}"
+        if venue is Venue.BSE:
+            return f"bj{code}"
+        return f"sh{code}"  # SSE default
 
     def _df_to_bars(self, df, iid: InstrumentId) -> Iterator[Bar]:
         # AKShare column names are Chinese; the canonical set is:

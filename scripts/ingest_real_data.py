@@ -43,6 +43,33 @@ UNIVERSE: list[dict] = [
     {"iid": "US.NASDAQ.EQUITY.MSFT", "name_local": "微软", "name_en": "Microsoft Corp", "currency": "USD"},
     {"iid": "US.NASDAQ.ETF.QQQ", "name_local": "QQQ", "name_en": "Invesco QQQ Trust", "currency": "USD"},
     {"iid": "US.ARCA.ETF.SPY", "name_local": "SPY", "name_en": "SPDR S&P 500 ETF", "currency": "USD"},
+    # ---- 扩充 universe: A股 15 只跨行业龙头 (横截面分散度) ----
+    {"iid": "CN.SSE.EQUITY.600519", "name_local": "贵州茅台", "name_en": "Kweichow Moutai", "currency": "CNY"},
+    {"iid": "CN.SZSE.EQUITY.300750", "name_local": "宁德时代", "name_en": "CATL", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.600036", "name_local": "招商银行", "name_en": "China Merchants Bank", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.601318", "name_local": "中国平安", "name_en": "Ping An Insurance", "currency": "CNY"},
+    {"iid": "CN.SZSE.EQUITY.002594", "name_local": "比亚迪", "name_en": "BYD", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.601012", "name_local": "隆基绿能", "name_en": "LONGi Green Energy", "currency": "CNY"},
+    {"iid": "CN.SZSE.EQUITY.002415", "name_local": "海康威视", "name_en": "Hikvision", "currency": "CNY"},
+    {"iid": "CN.SZSE.EQUITY.002475", "name_local": "立讯精密", "name_en": "Luxshare Precision", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.603259", "name_local": "药明康德", "name_en": "WuXi AppTec", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.600309", "name_local": "万华化学", "name_en": "Wanhua Chemical", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.600900", "name_local": "长江电力", "name_en": "China Yangtze Power", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.601088", "name_local": "中国神华", "name_en": "China Shenhua Energy", "currency": "CNY"},
+    {"iid": "CN.SZSE.EQUITY.000333", "name_local": "美的集团", "name_en": "Midea Group", "currency": "CNY"},
+    {"iid": "CN.SSE.EQUITY.600690", "name_local": "海尔智家", "name_en": "Haier Smart Home", "currency": "CNY"},
+    {"iid": "CN.SZSE.EQUITY.000858", "name_local": "五粮液", "name_en": "Wuliangye Yibin", "currency": "CNY"},
+    # ---- 扩充 universe: 美股 10 只跨板块龙头 ----
+    {"iid": "US.NYSE.EQUITY.JPM", "name_local": "摩根大通", "name_en": "JPMorgan Chase", "currency": "USD"},
+    {"iid": "US.NYSE.EQUITY.JNJ", "name_local": "强生", "name_en": "Johnson & Johnson", "currency": "USD"},
+    {"iid": "US.NYSE.EQUITY.XOM", "name_local": "埃克森美孚", "name_en": "Exxon Mobil", "currency": "USD"},
+    {"iid": "US.NYSE.EQUITY.WMT", "name_local": "沃尔玛", "name_en": "Walmart", "currency": "USD"},
+    {"iid": "US.NYSE.EQUITY.CAT", "name_local": "卡特彼勒", "name_en": "Caterpillar", "currency": "USD"},
+    {"iid": "US.NASDAQ.EQUITY.NVDA", "name_local": "英伟达", "name_en": "NVIDIA", "currency": "USD"},
+    {"iid": "US.NASDAQ.EQUITY.AMZN", "name_local": "亚马逊", "name_en": "Amazon", "currency": "USD"},
+    {"iid": "US.NASDAQ.EQUITY.TSLA", "name_local": "特斯拉", "name_en": "Tesla", "currency": "USD"},
+    {"iid": "US.NYSE.EQUITY.BA", "name_local": "波音", "name_en": "Boeing", "currency": "USD"},
+    {"iid": "US.NYSE.EQUITY.DIS", "name_local": "迪士尼", "name_en": "Disney", "currency": "USD"},
 ]
 
 
@@ -95,6 +122,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Ingest real market data into Postgres")
     ap.add_argument("--days", type=int, default=180, help="history window in days")
     ap.add_argument("--db", default=os.getenv("DATABASE_URL"), help="database URL")
+    ap.add_argument("--market", choices=["cn", "us", "all"], default="all",
+                    help="restrict to one market (CN akshare needs no proxy; US yfinance does)")
     args = ap.parse_args()
     if not args.db:
         print("ERROR: set DATABASE_URL or pass --db", file=sys.stderr)
@@ -107,6 +136,21 @@ def main() -> int:
     yf = YFinanceAdapter()
     adapter_map = {Market.CN: ak, Market.US: yf}
 
+    # CN (akshare → eastmoney/sina) must NOT go through the Clash proxy;
+    # US (yfinance → yahoo) MUST go through it. Save originals so we can toggle.
+    proxy_keys = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+                  "ALL_PROXY", "all_proxy")
+    saved_proxy = {k: os.environ.get(k) for k in proxy_keys}
+
+    def proxy_on() -> None:
+        for k in proxy_keys:
+            if saved_proxy[k] is not None:
+                os.environ[k] = saved_proxy[k]
+
+    def proxy_off() -> None:
+        for k in proxy_keys:
+            os.environ.pop(k, None)
+
     end = date.today()
     start = end - timedelta(days=args.days)
     url = _to_psycopg_url(args.db)
@@ -117,11 +161,18 @@ def main() -> int:
         with conn.cursor() as cur:
             for meta in UNIVERSE:
                 iid = parse_instrument_id(meta["iid"])
+                if args.market != "all" and iid.market.value.lower() != args.market:
+                    continue
                 adapter = adapter_map.get(iid.market)
                 if adapter is None:
                     print(f"  SKIP {meta['iid']}: no adapter for {iid.market}")
                     fail += 1
                     continue
+                # toggle proxy per market
+                if iid.market is Market.CN:
+                    proxy_off()
+                else:
+                    proxy_on()
                 try:
                     bars = list(adapter.fetch_bars_daily(iid, start, end, adjust="forward"))
                     if not bars:
@@ -139,6 +190,8 @@ def main() -> int:
                     print(f"  FAIL {meta['iid']}: {e}")
                     fail += 1
 
+    # restore proxy env
+    proxy_on()
     print(f"\ndone: {ok} ok / {fail} fail / {total_bars} total bars over {args.days}d")
     return 0 if fail == 0 else 2
 
