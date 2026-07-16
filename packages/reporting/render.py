@@ -16,17 +16,38 @@ def render_daily_report(
     no_forecasts: Sequence[NoForecast],
     portfolio: PortfolioTarget,
     metrics: dict[str, float] | None = None,
+    market_failures: Sequence[str] | None = None,
 ) -> str:
     lines: list[str] = []
-    lines.append(f"# Daily Report — {as_of.isoformat()}")
+    # Degraded header (spec §38 系统: 部分市场失败时组合报告明确降级而非伪造完整结果).
+    degraded = bool(no_forecasts) or bool(market_failures)
+    if degraded:
+        lines.append(f"# Daily Report — {as_of.isoformat()}  ⚠️ DEGRADED")
+        lines.append("")
+        lines.append("> **本报告已降级**：以下标的/市场无法生成预测，结果不完整。")
+        if market_failures:
+            lines.append("> 市场失败: " + "; ".join(market_failures))
+        if no_forecasts:
+            lines.append(
+                "> 无预测: "
+                + ", ".join(nf.instrument_id.canonical() for nf in no_forecasts)
+            )
+    else:
+        lines.append(f"# Daily Report — {as_of.isoformat()}")
     lines.append("")
     lines.append("## Forecasts")
-    lines.append("| Instrument | Score | Horizon | Model | FeatureHash |")
-    lines.append("|---|---|---|---|---|")
+    lines.append(
+        "| Instrument | Local | FX | Base | Horizon | Model@Ver | DataVer |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
     for f in sorted(forecasts, key=lambda x: x.score, reverse=True):
+        local = f"{f.expected_return_local:+.4f}" if f.expected_return_local is not None else "—"
+        fx = f"{f.expected_fx_return:+.4f}" if f.expected_fx_return is not None else "0.0000"
+        base = f"{f.expected_return_base:+.4f}" if f.expected_return_base is not None else f"{f.score:+.4f}"
+        data_v = f.data_version or "—"
         lines.append(
-            f"| {f.instrument_id.canonical()} | {f.score:+.4f} | {f.horizon_days}d "
-            f"| {f.model_id}@{f.model_version} | {f.feature_hash[:12]} |"
+            f"| {f.instrument_id.canonical()} | {local} | {fx} | {base} "
+            f"| {f.horizon_days}d | {f.model_id}@{f.model_version} | {data_v} |"
         )
     if no_forecasts:
         lines.append("")

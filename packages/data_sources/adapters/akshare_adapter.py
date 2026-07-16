@@ -21,7 +21,7 @@ from typing import Iterable, Iterator, Literal
 from packages.common.errors import DataConflictError, InternalError
 from packages.common.instrument_id import AssetType, InstrumentId, Market, Venue
 from packages.data_sources.contracts import (
-    Bar, InstrumentDescriptor, MarketDataAdapter,
+    Bar, FxRate, InstrumentDescriptor, MarketDataAdapter,
 )
 
 
@@ -116,6 +116,60 @@ class AkshareAdapter(MarketDataAdapter):
         if df is None or df.empty:
             return iter(())
         yield from self._df_to_bars(df, instrument_id)
+
+    def fetch_fx_rates(
+        self, *, base: str, quote: str, start: date, end: date,
+    ) -> Iterator[FxRate]:
+        """Historical FX via akshare Bank-of-China sina quotes (spec §3.2).
+
+        ``currency_boc_sina`` returns BoC reference rates expressed as
+        ``1 unit of foreign currency = N CNY``. We therefore natively fetch
+        the foreign leg against CNY and invert when the caller asks for the
+        reverse pair (e.g. CNY→USD). V1 wires USD/CNY only; any other pair
+        raises ``NotImplementedError`` (fail-closed, no partial coverage).
+        """
+        import akshare as ak
+        # Map ISO ccy → BoC sina symbol. Only USD is wired in V1.
+        _BOC_SYMBOL = {"USD": "美元"}
+        foreign = None
+        invert = False
+        if base == "CNY" and quote in _BOC_SYMBOL:
+            foreign, invert = quote, True
+        elif quote == "CNY" and base in _BOC_SYMBOL:
+            foreign = base
+        if foreign is None:
+            raise NotImplementedError(
+                f"akshare FX pair {base}/{quote} not wired (V1: USD/CNY only)"
+            )
+        df = ak.currency_boc_sina(symbol=_BOC_SYMBOL[foreign])
+        if df is None or df.empty:
+            return iter(())
+        col_date = next((c for c in df.columns if c in ("日期", "date")), "日期")
+        # BoC "中行折算价" is the mid reference rate (1 foreign = N CNY).
+        col_rate = next(
+            (c for c in df.columns if c in ("中行折算价", "rate")), "中行折算价"
+        )
+        for _, row in df.iterrows():
+            d_raw = row[col_date]
+            local_date = d_raw if isinstance(d_raw, date) else date.fromisoformat(str(d_raw)[:10])
+            if local_date < start or local_date > end:
+                continue
+            boc_rate = Decimal(str(row[col_rate]))
+            # BoC "中行折算价" is quoted as CNY per 100 units of foreign ccy.
+            per_unit = boc_rate / Decimal("100")
+            rate = (Decimal("1") / per_unit) if invert else per_unit
+            event = _cn_session_close_utc(local_date)
+            yield FxRate(
+                base_ccy=base, quote_ccy=quote,
+                market_local_date=local_date,
+                rate=rate,
+                event_time_utc=event,
+                available_at_utc=event + self._eod_lag,
+                source=self.adapter_id,
+                source_version=self.source_version,
+                license_tag=self.license_tag,
+                quality_status="NORMAL",
+            )
 
     # ------ helpers -----------------------------------------------------
 

@@ -21,7 +21,7 @@ from typing import Iterable, Iterator, Literal
 from packages.common.errors import DataConflictError, InternalError
 from packages.common.instrument_id import AssetType, InstrumentId, Market
 from packages.data_sources.contracts import (
-    Bar, InstrumentDescriptor, MarketDataAdapter,
+    Bar, FxRate, InstrumentDescriptor, MarketDataAdapter,
 )
 
 
@@ -80,6 +80,40 @@ class YFinanceAdapter(MarketDataAdapter):
         if df is None or df.empty:
             return iter(())
         yield from self._df_to_bars(df, instrument_id, adjust=adjust)
+
+    def fetch_fx_rates(
+        self, *, base: str, quote: str, start: date, end: date,
+    ) -> Iterator[FxRate]:
+        """Historical FX via yfinance (spec §3.2 FX Adapter).
+
+        yfinance quotes any pair as ``{BASE}{QUOTE}=X`` returning daily Close
+        expressed as ``1 base = N quote`` (e.g. USDCNY=X → 1 USD = 7.18 CNY).
+        We treat the FX tape as a 24h market but stamp a daily close at the
+        US session close UTC for consistency with the equity PIT contract.
+        """
+        import yfinance as yf
+        symbol = f"{base}{quote}=X"
+        df = yf.Ticker(symbol).history(
+            start=start.isoformat(), end=(end + timedelta(days=1)).isoformat(),
+            auto_adjust=False, actions=False, raise_errors=False,
+        )
+        if df is None or df.empty:
+            return iter(())
+        for ts, row in df.iterrows():
+            local_date = ts.date() if hasattr(ts, "date") else date.fromisoformat(str(ts)[:10])
+            rate = Decimal(str(row["Close"]))
+            event = _session_close_utc(local_date)
+            yield FxRate(
+                base_ccy=base, quote_ccy=quote,
+                market_local_date=local_date,
+                rate=rate,
+                event_time_utc=event,
+                available_at_utc=event + self._eod_lag,
+                source=self.adapter_id,
+                source_version=self.source_version,
+                license_tag=self.license_tag,
+                quality_status="NORMAL",
+            )
 
     # -- transforms (kept public-static-ish for unit-testable seams) ------
     def _df_to_bars(

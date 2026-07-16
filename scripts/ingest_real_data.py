@@ -118,6 +118,27 @@ def _upsert_bars(cur, iid, bars):
     return rows_written
 
 
+def _upsert_fx(cur, base: str, quote: str, rates) -> int:
+    """Upsert FxRate rows into the ``fx_rate`` table. Mirrors SqlFxRepository.upsert."""
+    n = 0
+    for r in rates:
+        cur.execute(
+            "DELETE FROM fx_rate"
+            " WHERE base_ccy=%s AND quote_ccy=%s AND market_local_date=%s AND source=%s",
+            (base, quote, r.market_local_date, r.source),
+        )
+        cur.execute(
+            "INSERT INTO fx_rate"
+            " (base_ccy, quote_ccy, market_local_date, rate,"
+            "  available_at_utc, source)"
+            " VALUES (%s,%s,%s,%s,%s,%s)",
+            (base, quote, r.market_local_date, r.rate,
+             r.available_at_utc, r.source),
+        )
+        n += 1
+    return n
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Ingest real market data into Postgres")
     ap.add_argument("--days", type=int, default=180, help="history window in days")
@@ -190,9 +211,29 @@ def main() -> int:
                     print(f"  FAIL {meta['iid']}: {e}")
                     fail += 1
 
+    # ---- FX: USD/CNY (spec §3.2 FX Adapter + §2.1.6 cross-currency) ----
+    # yfinance FX tape (USDCNY=X) needs the Clash proxy ON.
+    proxy_on()
+    fx_total = 0
+    try:
+        fx_rates = list(yf.fetch_fx_rates(base="USD", quote="CNY",
+                                          start=start, end=end))
+        if fx_rates:
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    n = _upsert_fx(cur, "USD", "CNY", fx_rates)
+                    conn.commit()
+                    fx_total = n
+                    print(f"  OK   FX USD/CNY: {n} rates")
+        else:
+            print("  EMPTY FX USD/CNY: 0 rates")
+    except Exception as e:  # noqa: BLE001
+        print(f"  FAIL FX USD/CNY: {e}")
+
     # restore proxy env
     proxy_on()
-    print(f"\ndone: {ok} ok / {fail} fail / {total_bars} total bars over {args.days}d")
+    print(f"\ndone: {ok} ok / {fail} fail / {total_bars} total bars"
+          f" / {fx_total} fx rates over {args.days}d")
     return 0 if fail == 0 else 2
 
 

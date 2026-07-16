@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import math
+from datetime import date, timedelta
 from typing import Sequence
+
+from packages.fx.converter import FxConverter, FxNotAvailableError
 
 
 def _pct_returns_from_equity(equity: Sequence[float]) -> list[float]:
@@ -84,6 +87,38 @@ def brier_score(probs: Sequence[float], outcomes: Sequence[int]) -> float:
     if len(probs) != len(outcomes) or not probs:
         return 0.0
     return sum((p - y) ** 2 for p, y in zip(probs, outcomes)) / len(probs)
+
+
+def base_currency_returns(
+    local_returns: Sequence[float],
+    instrument_ccys: Sequence[str],
+    end_dates: Sequence[date],
+    fx_converter: FxConverter,
+    horizon_days: int,
+) -> list[float]:
+    """Convert local-currency returns to base-currency returns (spec §38 模型:
+    评价扣除本地成本和 FX 后的收益).
+
+    ``base_ret = local_ret + realised_fx_return``. Conservative: uses realised
+    FX history only (spec §12.6 forbids FX point forecasts). Fail-closed: a
+    missing rate leaves ``base_ret == local_ret`` rather than fabricating.
+    Pairs with :func:`information_coefficient` for a base-ccy IC.
+    """
+    if not (len(local_returns) == len(instrument_ccys) == len(end_dates)):
+        raise ValueError("local_returns / instrument_ccys / end_dates length mismatch")
+    out: list[float] = []
+    for lr, ccy, end in zip(local_returns, instrument_ccys, end_dates):
+        if ccy == fx_converter.base_ccy:
+            out.append(float(lr))
+            continue
+        start = end - timedelta(days=horizon_days)
+        try:
+            fxr = float(fx_converter.fx_return(
+                local_ccy=ccy, start=start, end=end))
+        except FxNotAvailableError:
+            fxr = 0.0
+        out.append(float(lr) + fxr)
+    return out
 
 
 def isotonic_calibrate(probs: Sequence[float], outcomes: Sequence[int]) -> list[tuple[float, float]]:

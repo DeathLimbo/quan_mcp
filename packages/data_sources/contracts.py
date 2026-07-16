@@ -115,6 +115,38 @@ class FundamentalAdapter(Protocol):
     ) -> Iterator[FundNAV]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class FxRate:
+    """Point-in-time FX rate: 1 unit of ``base_ccy`` = ``rate`` units of ``quote_ccy``.
+
+    PIT contract: ``available_at_utc`` is when the rate became observable
+    (EOD lag mirrors the equity adapters so downstream code cannot read a
+    same-day close before it is published). Mirrors spec §3.2 FX Adapter +
+    §2.1.6 (local vs base currency attribution).
+    """
+    base_ccy: str
+    quote_ccy: str
+    market_local_date: date
+    rate: Decimal
+    event_time_utc: datetime
+    available_at_utc: datetime
+    source: str
+    source_version: str = "unspecified"
+    license_tag: str = "INTERNAL_RESEARCH"
+    quality_status: str = "NORMAL"
+
+
+@runtime_checkable
+class FxAdapter(Protocol):
+    """Historical FX rates. V1 wires USD/CNY (and inverses) only."""
+
+    adapter_id: str
+
+    def fetch_fx_rates(
+        self, *, base: str, quote: str, start: date, end: date,
+    ) -> Iterator[FxRate]: ...
+
+
 @runtime_checkable
 class CorporateActionAdapter(Protocol):
     adapter_id: str
