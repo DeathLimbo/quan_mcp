@@ -128,7 +128,10 @@ class LightGBMTrainer:
         X, y = prepare_matrix(rows, self.feature_names)
         if self.task == "classification":
             y = [1.0 if v > 0 else 0.0 for v in y]
+        import numpy as np
         import lightgbm as lgb
+        X = np.array(X, dtype=np.float64)
+        y = np.array(y, dtype=np.float64)
         train_set = lgb.Dataset(X, label=y, feature_name=list(self.feature_names))
 
         valid_sets: list[lgb.Dataset] = []
@@ -137,6 +140,8 @@ class LightGBMTrainer:
             Xv, yv = prepare_matrix(valid_rows, self.feature_names)
             if self.task == "classification":
                 yv = [1.0 if v > 0 else 0.0 for v in yv]
+            Xv = np.array(Xv, dtype=np.float64)
+            yv = np.array(yv, dtype=np.float64)
             valid_sets.append(lgb.Dataset(Xv, label=yv, feature_name=list(self.feature_names)))
             valid_names.append("valid")
 
