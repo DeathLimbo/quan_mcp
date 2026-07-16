@@ -56,6 +56,8 @@ def _load_db_backends():
 def main() -> int:
     ap = argparse.ArgumentParser(description="Walk-forward research baseline")
     ap.add_argument("--market", choices=["cn", "us"], required=True)
+    ap.add_argument("--trainer", choices=["linear", "lightgbm", "mlp"], default="linear",
+                    help="trainer to compare (spec §13.3: prove deep > LightGBM before adopting)")
     ap.add_argument("--days", type=int, default=730)
     ap.add_argument("--horizon", type=int, default=None, help="override horizon days")
     ap.add_argument("--db", default=os.getenv("DATABASE_URL"))
@@ -85,6 +87,12 @@ def main() -> int:
           f"bars {min(len(v) for v in bars_by.values())}-{max(len(v) for v in bars_by.values())}")
 
     def factory():
+        if args.trainer == "lightgbm":
+            from packages.training import LightGBMTrainer
+            return LightGBMTrainer(FEATURES, horizon, num_boost_round=100)
+        if args.trainer == "mlp":
+            from packages.training import MLPTrainer
+            return MLPTrainer(FEATURES, horizon, hidden=64, epochs=60)
         return LinearTrainer(FEATURES, horizon)
 
     wf = walk_forward(bars_by, FEATURES, horizon, trainer_factory=factory,
