@@ -17,6 +17,7 @@ from packages.common.instrument_id import InstrumentId
 from packages.common.time_utils import ensure_utc
 from packages.data_sources.contracts import Bar
 from packages.features.featureset import FeatureSet
+from packages.features.registry import FundamentalContext
 from packages.models.base import Model, Prediction
 from packages.models.registry import InMemoryModelRegistry
 
@@ -62,6 +63,7 @@ class InferenceService:
         as_of: datetime,
         horizon_days: int,
         bars: Sequence[Bar],
+        fund_ctx: FundamentalContext | None = None,
     ) -> Forecast | NoForecast:
         as_of_utc = ensure_utc(as_of)
         rec = self._registry.get_production(instrument_id.market, horizon_days)
@@ -92,7 +94,7 @@ class InferenceService:
                 detail=f"artifact for {rec.model_id}@{rec.version} does not satisfy Model protocol",
             )
 
-        feats = self._fs.compute(bars, as_of_utc)
+        feats = self._fs.compute(bars, as_of_utc, fund_ctx=fund_ctx)
         missing = [k for k, v in feats.items() if v is None]
         if missing:
             return NoForecast(

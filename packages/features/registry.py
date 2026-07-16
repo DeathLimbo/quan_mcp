@@ -4,7 +4,24 @@ from __future__ import annotations
 import hashlib
 import inspect
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
+
+
+@dataclass(frozen=True, slots=True)
+class FundamentalContext:
+    """PIT-safe fundamentals snapshot visible at an as-of timestamp.
+
+    Carried alongside bars into feature functions that declare
+    ``requires_fundamentals=True``. ``facts`` maps a fact name (e.g.
+    ``"pe_ratio"``, ``"market_cap"``) to its value as known at ``as_of``;
+    ``sector`` / ``industry`` enable cross-sectional relative features.
+    Callers build this from :class:`packages.fundamentals.facts.FactStore`
+    with a PIT query so no look-ahead leaks.
+    """
+    facts: dict[str, float | None] = field(default_factory=dict)
+    sector: str | None = None
+    industry: str | None = None
+    as_of: Any = None  # datetime for traceability
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +32,7 @@ class FeatureSpec:
     is_point_in_time: bool
     fn: Callable[..., float | None]
     source_hash: str            # sha256 of fn source; part of dataset fingerprint
+    requires_fundamentals: bool = False  # fn signature is (bars, fund_ctx) when True
 
     def compute(self, *args, **kwargs) -> float | None:
         return self.fn(*args, **kwargs)
@@ -50,7 +68,15 @@ def feature(
     version: str = "v1",
     lookback_days: int,
     is_point_in_time: bool = True,
+    requires_fundamentals: bool = False,
 ) -> Callable[[Callable], Callable]:
+    """Register a feature.
+
+    ``requires_fundamentals=True`` declares that the wrapped fn takes a second
+    positional argument ``(bars, fund_ctx)`` — a :class:`FundamentalContext`.
+    The registry / FeatureSet use this flag to decide whether to inject the
+    context at compute time (and to fail-closed to None when it is absent).
+    """
     def _wrap(fn: Callable) -> Callable:
         src = inspect.getsource(fn)
         h = hashlib.sha256(f"{name}|{version}|{src}".encode("utf-8")).hexdigest()
@@ -58,6 +84,7 @@ def feature(
             name=name, version=version,
             lookback_days=lookback_days, is_point_in_time=is_point_in_time,
             fn=fn, source_hash=h,
+            requires_fundamentals=requires_fundamentals,
         )
         registry.register(spec)
         fn.feature_spec = spec  # type: ignore[attr-defined]
