@@ -22,11 +22,12 @@ from packages.common.time_utils import ensure_utc
 from packages.data_sources.contracts import Bar
 from packages.features.featureset import FeatureSet
 from packages.inference.service import Forecast, InferenceService, NoForecast
-from packages.common.instrument_id import Market
+from packages.common.instrument_id import AssetType, Market
 from packages.models.registry import InMemoryModelRegistry, ModelState
 from packages.portfolio.builder import (
     PortfolioConfig, build_portfolio, build_portfolio_from_scores,
 )
+from packages.portfolio.target import evaluate_return_target
 from packages.reporting.render import render_daily_report, render_risk_trace
 from packages.risk.engine import RiskContext, default_engine
 from packages.risk.proposal import propose
@@ -81,6 +82,12 @@ TOOL_MANIFEST: list[dict[str, Any]] = [
      "description": "Build target weights from a scored universe. No side effects.",
      "read_only": True,
      "params": {"scores": "map<string, number>", "max_name_weight": "number?"}},
+    {"name": "return_target_evaluate",
+     "description": "Assess whether a requested return target can proceed to recommendation.",
+     "read_only": True,
+     "params": {"target_return": "number", "horizon_days": "int",
+                "asset_type": "string?", "share_class": "string?",
+                "allow_high_risk": "bool?"}},
     {"name": "risk_evaluate_proposal",
      "description": "Run the 8-layer risk engine and return a RiskProposal.",
      "read_only": True,
@@ -293,7 +300,29 @@ class ReadTools:
             "gross": target.gross,
         })
 
-    # ---- 12: risk_evaluate_proposal ---------------------------------------
+    # ---- 12: return_target_evaluate ---------------------------------------
+
+    def return_target_evaluate(self, *, target_return: float, horizon_days: int,
+                               asset_type: str | None = None,
+                               share_class: str | None = None,
+                               allow_high_risk: bool = False) -> dict:
+        try:
+            parsed_asset = AssetType(asset_type) if asset_type is not None else None
+        except ValueError:
+            return err_str("UNSUPPORTED_ASSET", f"unsupported asset_type {asset_type!r}")
+        try:
+            assessment = evaluate_return_target(
+                target_return=target_return,
+                horizon_days=horizon_days,
+                asset_type=parsed_asset,
+                share_class=share_class,
+                allow_high_risk=allow_high_risk,
+            )
+        except ValueError as exc:
+            return err_str("UNSUPPORTED_HORIZON", str(exc))
+        return ok(assessment.to_dict())
+
+    # ---- 13: risk_evaluate_proposal ---------------------------------------
 
     def risk_evaluate_proposal(self, *, instrument_id: str, side: int,
                                quantity: float, ref_price: float,
@@ -335,7 +364,7 @@ class ReadTools:
             "markdown": render_risk_trace(p.trace),
         })
 
-    # ---- 13: risk_run_scenario --------------------------------------------
+    # ---- 14: risk_run_scenario --------------------------------------------
 
     def risk_run_scenario(self, *, instrument_id: str, side: int,
                           quantity: float, ref_price: float,
@@ -352,7 +381,7 @@ class ReadTools:
             "trace": [asdict(d) | {"verdict": d.verdict.value} for d in trace],
         })
 
-    # ---- 14: prediction_record --------------------------------------------
+    # ---- 15: prediction_record --------------------------------------------
 
     def prediction_record(self, prediction_id: str, explanation: str,
                           confirmed: bool) -> dict:
@@ -361,7 +390,7 @@ class ReadTools:
         rec_id = self._prediction_recorder(prediction_id, explanation, confirmed)
         return ok({"record_id": rec_id})
 
-    # ---- 15: report_get_payload -------------------------------------------
+    # ---- 16: report_get_payload -------------------------------------------
 
     def report_get_payload(self, report_id: str) -> dict:
         if self._report_lookup is None:
@@ -372,7 +401,7 @@ class ReadTools:
         markdown = payload.get("markdown") or _quick_report_markdown(payload)
         return ok({"payload": payload, "markdown": markdown})
 
-    # ---- 16: evaluation_get_summary ---------------------------------------
+    # ---- 17: evaluation_get_summary ---------------------------------------
 
     def evaluation_get_summary(self, model_id: str, window_id: str) -> dict:
         if self._evaluation_lookup is None:
