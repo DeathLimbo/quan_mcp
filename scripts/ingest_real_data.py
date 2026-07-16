@@ -101,10 +101,10 @@ def main() -> int:
         return 1
 
     from packages.data_sources.adapters.akshare_adapter import AkshareAdapter
-    from packages.data_sources.adapters.yfinance_adapter import YfinanceAdapter
+    from packages.data_sources.adapters.yfinance_adapter import YFinanceAdapter
 
     ak = AkshareAdapter()
-    yf = YfinanceAdapter()
+    yf = YFinanceAdapter()
     adapter_map = {Market.CN: ak, Market.US: yf}
 
     end = date.today()
