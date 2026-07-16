@@ -13,7 +13,7 @@ license = { text = "Proprietary" }
 # MLflow for experiment tracking. Extras are grouped so single-purpose apps
 # (worker, MCP) can install only what they need.
 dependencies = [
-    "fastapi>=0.111,<0.116",
+    "fastapi>=0.111,<0.140",  # relaxed for mcp sdk (starlette 1.x)
     "uvicorn[standard]>=0.30,<0.32",
     "pydantic>=2.7,<3.0",
     "pydantic-settings>=2.3,<3.0",
@@ -34,6 +34,7 @@ dependencies = [
     "typer>=0.12,<0.13",
     "prometheus-client>=0.20,<0.22",
     "minio>=7.2,<8.0",
+    "mcp>=1.0,<2.0",  # MCP server sdk (quant-read-mcp / quant-admin-mcp)
 ]
 
 [project.optional-dependencies]
