@@ -13,9 +13,13 @@ from packages.ledger_paper.ledger import (
     Account, AccountType, Currency, JournalEntry, Leg, OrderIntent,
     PaperFill, Portfolio, Position, Trade, PortfolioValuation,
 )
+from packages.ledger_paper.simulator import (
+    SimulatedBroker, ReconciliationRow, reconcile_forecast_vs_fills,
+)
 
 __all__ = [
     "Account", "AccountType", "Currency", "JournalEntry", "Leg",
     "OrderIntent", "PaperFill", "Portfolio", "Position", "Trade",
     "PortfolioValuation",
+    "SimulatedBroker", "ReconciliationRow", "reconcile_forecast_vs_fills",
 ]
