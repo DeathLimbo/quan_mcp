@@ -95,7 +95,11 @@ def log_market_cap(bars: Sequence[Bar], ctx: FundamentalContext) -> float | None
 
 @feature("roe", lookback_days=1, requires_fundamentals=True)
 def roe(bars: Sequence[Bar], ctx: FundamentalContext) -> float | None:
-    """Return on equity = net_income / (book_value_per_share * shares)."""
+    """Return on equity. Prefer the provider's direct ROE; fall back to
+    net_income / (bvps * shares) when shares_outstanding is available."""
+    direct = _fact(ctx, "roe")
+    if direct is not None:
+        return direct / 100.0  # akshare reports ROE as percentage (e.g. 24.82)
     ni = _fact(ctx, "net_income")
     bvps = _fact(ctx, "book_value_per_share")
     shares = _fact(ctx, "shares_outstanding")

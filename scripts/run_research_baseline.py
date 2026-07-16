@@ -28,8 +28,11 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from packages.common.instrument_id import parse_instrument_id  # noqa: E402
+from packages.features import FundamentalContext  # noqa: E402
 from packages.training import walk_forward, LinearTrainer  # noqa: E402
 from packages.evaluation.metrics import information_coefficient  # noqa: E402
+import psycopg  # noqa: E402
+from datetime import datetime, time, timezone  # noqa: E402
 
 # ---- universes -------------------------------------------------------------
 # cn-fund: 7 QDII funds (all track Nasdaq — expect near-zero cross-sectional IC)
@@ -59,6 +62,40 @@ US_EQUITIES = [
 
 FEATURES = ["ret_1d", "ret_5d", "ret_20d", "vol_20d", "rsi_14d",
             "atr_14d", "max_drawdown_20d", "price_ma_dev_20d"]
+FEATURES_WITH_FUND = FEATURES + ["pe_ratio", "pb_ratio", "earnings_yield", "roe"]
+
+
+def _to_psycopg_url(url: str) -> str:
+    if url.startswith("postgresql+psycopg://"):
+        return "postgresql://" + url[len("postgresql+psycopg://"):]
+    return url
+
+
+def make_fund_ctx_provider(db_url: str):
+    """Return a fund_ctx_provider(as_of_date, instrument_id) -> FundamentalContext.
+
+    Queries fundamental_fact PIT-safe: for each fact_name, take the latest row
+    whose available_at_utc <= as_of (DISTINCT ON + ORDER BY as_of_utc DESC).
+    """
+    conn = psycopg.connect(_to_psycopg_url(db_url), autocommit=True)
+
+    def provider(as_of_date, instrument_id):
+        iid_str = instrument_id.canonical()
+        as_of_dt = datetime.combine(as_of_date, time(23, 59, 59), tzinfo=timezone.utc)
+        cur = conn.execute(
+            "SELECT DISTINCT ON (fact_name) fact_name, value_num"
+            " FROM fundamental_fact"
+            " WHERE instrument_id = %s AND available_at_utc <= %s"
+            " ORDER BY fact_name, as_of_utc DESC",
+            (iid_str, as_of_dt),
+        )
+        facts = {}
+        for fact_name, value in cur:
+            if value is not None:
+                facts[fact_name] = float(value)
+        return FundamentalContext(facts=facts) if facts else None
+
+    return provider
 
 
 def _load_db_backends():
@@ -78,6 +115,12 @@ def main() -> int:
     ap.add_argument("--days", type=int, default=1825, help="history window in days")
     ap.add_argument("--horizon", type=int, default=None, help="override horizon days")
     ap.add_argument("--train-days", type=int, default=365, help="walk-forward train window")
+    ap.add_argument("--fundamentals", action="store_true",
+                    help="inject fundamentals (PE/PB/ROE) via DB-backed fund_ctx_provider")
+    ap.add_argument("--num-boost-round", type=int, default=100)
+    ap.add_argument("--learning-rate", type=float, default=0.05)
+    ap.add_argument("--max-depth", type=int, default=-1)
+    ap.add_argument("--num-leaves", type=int, default=31)
     ap.add_argument("--db", default=os.getenv("DATABASE_URL"))
     args = ap.parse_args()
     if not args.db:
@@ -114,15 +157,27 @@ def main() -> int:
     def factory():
         if args.trainer == "lightgbm":
             from packages.training import LightGBMTrainer
-            return LightGBMTrainer(FEATURES, horizon, num_boost_round=100)
+            return LightGBMTrainer(features, horizon,
+                                   num_boost_round=args.num_boost_round,
+                                   learning_rate=args.learning_rate,
+                                   max_depth=args.max_depth,
+                                   num_leaves=args.num_leaves)
         if args.trainer == "mlp":
             from packages.training import MLPTrainer
-            return MLPTrainer(FEATURES, horizon, hidden=64, epochs=60)
-        return LinearTrainer(FEATURES, horizon)
+            return MLPTrainer(features, horizon, hidden=64, epochs=60)
+        return LinearTrainer(features, horizon)
 
-    wf = walk_forward(bars_by, FEATURES, horizon, trainer_factory=factory,
+    features = FEATURES_WITH_FUND if args.fundamentals else FEATURES
+    fund_ctx_provider = None
+    if args.fundamentals:
+        fund_ctx_provider = make_fund_ctx_provider(args.db)
+        print(f"[{args.market}/{args.trainer}] fundamentals enabled: "
+              f"{len(features)} features (8 technical + 4 fundamental)")
+
+    wf = walk_forward(bars_by, features, horizon, trainer_factory=factory,
                       start=start, end=end, train_days=args.train_days,
-                      test_days=21, step_days=21)
+                      test_days=21, step_days=21,
+                      fund_ctx_provider=fund_ctx_provider)
     preds = wf.predictions
     print(f"[{args.market}/{args.trainer}] walk-forward: {len(preds)} OOS preds, "
           f"{len(wf.model_versions)} windows")

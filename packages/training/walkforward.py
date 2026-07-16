@@ -58,6 +58,7 @@ def walk_forward(
     train_days: int = 252,
     test_days: int = 21,
     step_days: int = 21,
+    fund_ctx_provider: Callable[[date, InstrumentId], object | None] | None = None,
 ) -> WalkForwardResult:
     """Run walk-forward training across [start, end].
 
@@ -85,6 +86,7 @@ def walk_forward(
                 list(bars), feature_names,
                 horizon_days=horizon_days,
                 start=tr_start, end=tr_end,
+                fund_ctx_provider=fund_ctx_provider,
             )
             train_rows.extend(rows)
 
@@ -105,6 +107,7 @@ def walk_forward(
                 list(bars), feature_names,
                 horizon_days=horizon_days,
                 start=te_start, end=te_end,
+                fund_ctx_provider=fund_ctx_provider,
             )
             for r in test_rows:
                 if r.label is None:
