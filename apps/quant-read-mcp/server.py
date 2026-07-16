@@ -151,6 +151,21 @@ def portfolio_create_proposal(scores: dict[str, float],
 
 
 @mcp.tool()
+def return_target_evaluate(target_return: float, horizon_days: int,
+                           asset_type: str | None = None,
+                           share_class: str | None = None,
+                           allow_high_risk: bool = False) -> dict:
+    """Assess whether a requested return target can proceed to recommendation."""
+    return _tools.return_target_evaluate(
+        target_return=target_return,
+        horizon_days=horizon_days,
+        asset_type=asset_type,
+        share_class=share_class,
+        allow_high_risk=allow_high_risk,
+    )
+
+
+@mcp.tool()
 def risk_evaluate_proposal(instrument_id: str, side: int, quantity: float,
                            ref_price: float, proposed_weight: float) -> dict:
     """Run the 8-layer risk engine and return a RiskProposal."""
