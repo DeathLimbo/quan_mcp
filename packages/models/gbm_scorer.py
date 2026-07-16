@@ -36,7 +36,8 @@ from packages.common.errors import FeatureMissingError
 from packages.common.time_utils import utcnow
 from packages.datasets.builder import DatasetRow
 from packages.models.base import Prediction
-from packages.training.trainer import prepare_matrix
+# prepare_matrix imported lazily in fit() to avoid circular import
+# (training/__init__ -> lightgbm_trainer -> models.base -> models/__init__ -> here)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +170,7 @@ class GBMTrainer:
         model_id: str,
         version: str | None = None,
     ) -> TrainedGBMModel:
+        from packages.training.trainer import prepare_matrix
         X, y = prepare_matrix(rows, self.feature_names)
         if len(X) < self.min_samples_split:
             raise FeatureMissingError(
