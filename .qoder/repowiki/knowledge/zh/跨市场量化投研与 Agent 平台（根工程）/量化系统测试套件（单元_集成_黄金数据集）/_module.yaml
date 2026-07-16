@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: tests
+title: 量化系统测试套件（单元/集成/黄金数据集）
+scope:
+    - tests/
+source_files: []
+depends_on: []
+related_to: []

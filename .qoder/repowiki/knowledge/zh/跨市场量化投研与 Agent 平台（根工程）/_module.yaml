@@ -6,8 +6,8 @@ scope:
     - .gitignore
     - .pre-commit-config.yaml
     - alembic.ini
-    - pyproject.toml
     - .env.example
+    - pyproject.toml
 source_files: []
 depends_on: []
 related_to: []

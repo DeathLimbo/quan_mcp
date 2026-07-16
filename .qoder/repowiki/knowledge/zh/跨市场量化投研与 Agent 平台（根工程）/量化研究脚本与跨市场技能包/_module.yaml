@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: scripts_and_skills
+title: 量化研究脚本与跨市场技能包
+scope:
+    - scripts/
+    - skills/
+source_files: []
+depends_on: []
+related_to: []
