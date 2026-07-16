@@ -60,6 +60,10 @@ class RiskContext:
     exposure_frac_limit: float = 0.20
     gross_frac_current: float = 0.0
     gross_frac_limit: float = 1.0
+    # Per-currency exposure (§29 币种上限): post-trade fraction of equity in
+    # this instrument's currency. Caller supplies via currency_exposure().
+    per_ccy_exposure_frac_current: float = 0.0
+    per_ccy_exposure_limit: float = 0.40
     stress_shock_bps: float = 0.0
     stress_shock_limit_bps: float = 3000.0
     kill_switch: bool = False
@@ -135,6 +139,11 @@ def _l5_exposure_limits(ctx: RiskContext) -> RiskDecision:
     if ctx.gross_frac_current > ctx.gross_frac_limit + 1e-12:
         return RiskDecision("exposure_limits", RiskVerdict.REJECT, "GROSS_LIMIT",
                             f"gross exposure {ctx.gross_frac_current} > limit {ctx.gross_frac_limit}")
+    # Per-currency cap (§29 币种上限) — e.g. cap total USD exposure at 40%.
+    if ctx.per_ccy_exposure_frac_current > ctx.per_ccy_exposure_limit + 1e-12:
+        return RiskDecision("exposure_limits", RiskVerdict.REJECT, "CCY_LIMIT",
+                            f"per-currency exposure {ctx.per_ccy_exposure_frac_current} "
+                            f"> limit {ctx.per_ccy_exposure_limit}")
     return RiskDecision("exposure_limits", RiskVerdict.ACCEPT, "OK", "exposure ok")
 
 

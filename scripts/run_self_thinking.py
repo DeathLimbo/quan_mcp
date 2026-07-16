@@ -25,12 +25,14 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import psycopg
+from decimal import Decimal
 from packages.common.instrument_id import parse_instrument_id
 from packages.datasets.builder import build_dataset
 from packages.features import FundamentalContext
 from packages.training import LightGBMTrainer
-from packages.evaluation.metrics import information_coefficient
+from packages.evaluation.metrics import base_currency_returns, information_coefficient
 from packages.drift.metrics import DriftReport, psi
+from packages.fx.converter import FxConverter
 from packages.models.registry import InMemoryModelRegistry
 from packages.audit.record import AuditLog, InMemoryAuditSink
 from packages.automation import AutoRetrainEngine, ICGuard, WeeklyReviewer
@@ -46,6 +48,15 @@ FEATURES = ["ret_1d", "ret_5d", "ret_20d", "vol_20d", "rsi_14d",
             "atr_14d", "max_drawdown_20d", "price_ma_dev_20d",
             "pe_ratio", "pb_ratio", "earnings_yield", "roe"]
 HORIZON = 20
+
+# US cross-sector universe for the FX-aware leg (§12.6/§38). US fundamentals
+# are not ingested, so this leg uses price-volume features only.
+US_EQUITIES = [
+    "US.NASDAQ.EQUITY.AAPL", "US.NASDAQ.EQUITY.MSFT",
+    "US.NYSE.EQUITY.JPM", "US.NASDAQ.EQUITY.NVDA", "US.NYSE.EQUITY.CAT",
+]
+US_FEATURES = ["ret_1d", "ret_5d", "ret_20d", "vol_20d", "rsi_14d",
+               "atr_14d", "max_drawdown_20d", "price_ma_dev_20d"]
 
 
 def _to_psycopg_url(url):
@@ -75,6 +86,21 @@ def _make_fund_ctx_provider(db_url):
         facts = {fn: float(v) for fn, v in cur if v is not None}
         return FundamentalContext(facts=facts) if facts else None
     return provider
+
+
+def _make_fx_converter(db_url):
+    """Build a FxConverter backed by the live fx_rate table (psycopg)."""
+    conn = psycopg.connect(_to_psycopg_url(db_url), autocommit=True)
+
+    def provider(base, quote, on_or_before):
+        cur = conn.execute(
+            "SELECT rate FROM fx_rate WHERE base_ccy=%s AND quote_ccy=%s "
+            "AND market_local_date <= %s ORDER BY market_local_date DESC LIMIT 1",
+            (base, quote, on_or_before))
+        row = cur.fetchone()
+        return Decimal(str(row[0])) if row else None
+
+    return FxConverter(base_ccy="CNY", rate_provider=provider), conn
 
 
 def main() -> int:
@@ -247,6 +273,67 @@ def main() -> int:
     print()
     print(review.to_markdown())
 
+    # 8. 美股 FX-aware 归因 (§12.6/§38: 跨币种分解 + 扣FX评价)
+    print("\n" + "=" * 60)
+    print("8. 美股 FX-aware 归因 (§12.6/§38 跨币种)")
+    print("=" * 60)
+    fx, fx_conn = _make_fx_converter(db)
+    us_train_rows = []
+    for fid in US_EQUITIES:
+        iid = parse_instrument_id(fid)
+        bars = b["bar_lookup"](iid, train_start - timedelta(days=60), end)
+        if len(bars) > 80:
+            us_train_rows.extend(build_dataset(
+                bars, US_FEATURES, horizon_days=HORIZON,
+                start=train_start, end=train_end))
+    us_trainer = LightGBMTrainer(US_FEATURES, HORIZON, task="classification",
+                                 num_boost_round=100)
+    us_model = us_trainer.fit(us_train_rows, model_id="us_equity_pv20d_v1")
+    print(f"   US train rows: {len(us_train_rows)} | "
+          f"model: {us_model.model_id}@{us_model.version}")
+    us_fc_rows = []
+    # Evaluate on a realised historical window so labels exist (the live
+    # forecast window is too recent to have 20d-forward labels yet).
+    us_eval_start = end - timedelta(days=200)
+    us_eval_end = end - timedelta(days=HORIZON)
+    for fid in US_EQUITIES:
+        iid = parse_instrument_id(fid)
+        bars = b["bar_lookup"](iid, train_start - timedelta(days=60), end)
+        if len(bars) > 80:
+            us_fc_rows.extend(build_dataset(
+                bars, US_FEATURES, horizon_days=HORIZON,
+                start=us_eval_start, end=us_eval_end))
+    us_pred = []
+    for r in us_fc_rows:
+        if r.label is None:
+            continue
+        try:
+            p = us_model.predict_one(r.features)
+            us_pred.append((p.score, r.label, r.as_of_date))
+        except Exception:
+            continue
+    if us_pred:
+        scores = [p[0] for p in us_pred]
+        local = [p[1] for p in us_pred]
+        ends = [p[2] for p in us_pred]
+        ccys = ["USD"] * len(us_pred)
+        ic_local = information_coefficient(scores, local)
+        base = base_currency_returns(local, ccys, ends, fx, horizon_days=HORIZON)
+        ic_base = information_coefficient(scores, base)
+        fx_contrib = [bv - lv for bv, lv in zip(base, local)]
+        avg_fx = sum(fx_contrib) / len(fx_contrib) if fx_contrib else 0.0
+        print(f"   US forecasts: {len(us_pred)} rows")
+        print(f"   IC(local USD):  {ic_local:+.4f}")
+        print(f"   IC(base CNY,扣FX): {ic_base:+.4f}")
+        print(f"   平均 FX 贡献: {avg_fx*100:+.3f}% (USD→CNY 已实现汇率归因)")
+        delta = abs(ic_base) - abs(ic_local)
+        print(f"   → 扣FX后 |IC| 变化 {delta:+.4f} "
+              f"({'FX归因有效' if delta > 0 else 'FX归因未改善信号'})")
+    else:
+        ic_local = ic_base = 0.0
+        print(f"   no labeled US forecasts (too recent)")
+    fx_conn.close()
+
     # Summary
     print("\n" + "=" * 60)
     print("自我思考执行完成")
@@ -254,7 +341,9 @@ def main() -> int:
     print(f"audit events: {len(audit.events())}")
     print(f"PRODUCTION model: {model.model_id}@{model.version[:8]}")
     print(f"drift: {worst.value} | retrain: {'YES' if retrain_event else 'no'}")
-    print(f"IC: {ic:+.4f} | rollback: {'YES' if rollback_event else 'no'}")
+    print(f"IC(CN): {ic:+.4f} | rollback: {'YES' if rollback_event else 'no'}")
+    if us_pred:
+        print(f"IC(US local): {ic_local:+.4f} | IC(US base 扣FX): {ic_base:+.4f}")
     print(f"verdict: {review.verdict}")
     return 0
 
