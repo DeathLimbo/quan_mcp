@@ -276,6 +276,39 @@ class ReadTools:
         ranked.sort(key=lambda x: x["score"], reverse=True)
         return ok({"top": ranked[:top_k], "skipped": skipped})
 
+    # ---- 10b: instrument_admission_check (issue #8) -----------------------
+    def instrument_admission_check(
+        self, instrument_id: str, *, horizon_days: int = 20,
+        min_history: int = 200,
+    ) -> dict:
+        """New-instrument admission gate (issue #8). An LLM MUST call this
+        before forecast_run on a new fund/equity — it checks the instrument
+        resolves, has enough history, and has an applicable PRODUCTION model.
+        Fail-closed: any miss returns a NO_FORECAST reason, no prediction.
+
+        Admission is the cold-start contract: data coverage + model
+        applicability + risk preconditions must hold before a new name is
+        allowed into the forecast path. This prevents a new fund/equity from
+        being force-fed into an existing model family.
+        """
+        try:
+            iid = parse_instrument_id(instrument_id)
+        except Exception as e:  # noqa: BLE001
+            return ok({"admitted": False, "reason": "UNSUPPORTED_INSTRUMENT",
+                       "detail": str(e)})
+        bars = self._bar_lookup(iid, date(1970, 1, 1), date.today())
+        if len(bars) < min_history:
+            return ok({"admitted": False, "reason": "INSUFFICIENT_HISTORY",
+                       "bars": len(bars), "min_history": min_history})
+        prod = self._registry.get_production(iid.market, horizon_days)
+        if prod is None:
+            return ok({"admitted": False, "reason": "NO_APPLICABLE_MODEL",
+                       "market": iid.market.value,
+                       "horizon_days": horizon_days})
+        return ok({"admitted": True, "instrument_id": iid.canonical(),
+                   "market": iid.market.value, "bars": len(bars),
+                   "model": f"{prod.model_id}@{prod.version}"})
+
     # ---- 11: portfolio_create_proposal ------------------------------------
 
     def portfolio_create_proposal(self, scores: dict[str, float],
