@@ -43,10 +43,19 @@ from packages.strategy_governance.policy import (
     validate_parameter_schema,
     validate_transition,
 )
+from packages.strategy_governance.shadow import (
+    DriftAutoSuspendConfig,
+    DriftAutoSuspender,
+    ShadowOutcome,
+    ShadowPrediction,
+    ShadowTracker,
+)
 
 __all__ = [
     "ChangeRequest",
     "ChangeRequestStatus",
+    "DriftAutoSuspendConfig",
+    "DriftAutoSuspender",
     "EvaluationResult",
     "EvaluationRun",
     "EvaluationStatus",
@@ -62,6 +71,9 @@ __all__ = [
     "PromotionDecision",
     "PromotionOutcome",
     "SchemaValidationError",
+    "ShadowOutcome",
+    "ShadowPrediction",
+    "ShadowTracker",
     "StrategyEvaluator",
     "StrategyGovernanceError",
     "StrategyState",

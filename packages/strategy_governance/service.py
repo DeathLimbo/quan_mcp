@@ -54,6 +54,10 @@ from packages.strategy_governance.repositories import (
     PromotionDecisionRepository,
     StrategyVersionRepository,
 )
+from packages.strategy_governance.shadow import (
+    DriftAutoSuspender,
+    ShadowTracker,
+)
 
 # Actor types allowed to APPROVE a promotion to PRODUCTION. An "agent" actor
 # may propose and transition non-production states, but the policy layer
@@ -76,6 +80,8 @@ class StrategyGovernanceService:
         schemas: dict[str, dict[str, ParamSpec]],
         evaluators: dict[str, StrategyEvaluator] | None = None,
         factors: "FactorVersionRepository | None" = None,
+        shadow_tracker: "ShadowTracker | None" = None,
+        drift_suspender: "DriftAutoSuspender | None" = None,
     ) -> None:
         self._v = versions
         self._cr = change_requests
@@ -87,6 +93,9 @@ class StrategyGovernanceService:
         self._evaluators = evaluators or {}
         # Phase 4: factor governance (issue #10 §11).
         self._factors = factors
+        # Phase 5: shadow forward-tracking + drift auto-suspend (issue #10 §11).
+        self._shadow = shadow_tracker or ShadowTracker()
+        self._drift_suspender = drift_suspender or DriftAutoSuspender()
 
     # ------------------------------------------------------------------ #
     # Propose (LLM/human may call)
@@ -572,6 +581,64 @@ class StrategyGovernanceService:
             "ic_without": reduced.ic,
             "incremental_ic": full.ic - reduced.ic,
         }
+
+    # ------------------------------------------------------------------ #
+    # Phase 5: shadow forward-tracking + drift auto-suspend (issue #10 §11)
+    # ------------------------------------------------------------------ #
+    def start_shadow(
+        self, *, strategy_id: str, version: str, decided_by: str,
+        approval_id: str | None = None, reason: str | None = None,
+    ) -> StrategyVersion:
+        """Transition a BACKTESTED version to SHADOW and begin forward-tracking.
+
+        From this point, every prediction the strategy makes is recorded; once
+        its horizon elapses it is settled against the realised return. The
+        resulting live track record is the honest measure of 'does it still
+        work now' — not the walk-forward that got it here.
+        """
+        return self.transition(strategy_id=strategy_id, version=version,
+                               to=StrategyState.SHADOW, decided_by=decided_by,
+                               approval_id=approval_id, reason=reason)
+
+    def record_shadow_prediction(
+        self, *, strategy_id: str, version: str, instrument_id: str,
+        as_of: "date", horizon_days: int, expected_return: float,
+        model_ref: str | None = None,
+    ) -> "ShadowPrediction":
+        """Record a live prediction. Stored white-on-black; settled later."""
+        return self._shadow.record_prediction(
+            strategy_id=strategy_id, version=version,
+            instrument_id=instrument_id, as_of=as_of,
+            horizon_days=horizon_days, expected_return=expected_return,
+            model_ref=model_ref,
+        )
+
+    def settle_shadow_outcomes(
+        self, *, as_of: "date", actual_return_fn,
+    ) -> list:
+        """Settle predictions whose horizon has elapsed by ``as_of``."""
+        return self._shadow.settle_due(as_of=as_of,
+                                       actual_return_fn=actual_return_fn)
+
+    def get_live_track_record(self, *, strategy_id: str,
+                              recent_n: int = 50) -> dict[str, float]:
+        """Honest out-of-sample accuracy of recent settled shadow predictions."""
+        return self._shadow.live_track_record(strategy_id=strategy_id,
+                                              recent_n=recent_n)
+
+    def check_drift_and_suspend(
+        self, *, strategy_id: str, version: str,
+        decided_by: str = "drift_monitor",
+    ) -> tuple[bool, str]:
+        """Check the live track record and auto-suspend if drifting.
+
+        This is the fail-closed safety net: a collapsed live IC or breached
+        drawdown suspends the strategy without waiting for a human. Returns
+        (suspended, reason)."""
+        return self._drift_suspender.check_and_suspend(
+            tracker=self._shadow, strategy_id=strategy_id, version=version,
+            service=self, decided_by=decided_by,
+        )
 
     # ------------------------------------------------------------------ #
     # helpers
