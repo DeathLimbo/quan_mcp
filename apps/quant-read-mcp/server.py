@@ -14,6 +14,7 @@ error (by design, spec §93) — the server still starts and exposes every tool.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -37,16 +38,32 @@ sys.modules[_mod_name] = _tools_mod
 _spec.loader.exec_module(_tools_mod)
 ReadTools = _tools_mod.ReadTools
 
+# DB-backed backends live alongside; loaded by file path for the same
+# hyphen-directory reason. Only imported when DATABASE_URL is set so the
+# server still starts without a database (fail-closed stubs).
+_db_spec = importlib.util.spec_from_file_location("_qrmc_db", _HERE / "db_backends.py")
+assert _db_spec and _db_spec.loader, "could not load db_backends.py"
+_db_mod = importlib.util.module_from_spec(_db_spec)
+sys.modules["_qrmc_db"] = _db_mod
+_db_spec.loader.exec_module(_db_mod)
+
 
 def _build_default_tools() -> ReadTools:
-    """Construct a ReadTools with in-memory / stub backends.
+    """Construct ReadTools.
 
-    Real deployments inject DB-backed callables via ``app.dependency_overrides``
-    or by constructing ReadTools with wired callables. The stubs here let the
-    server start standalone; unwired tools return ``NOT_CONFIGURED`` (fail-closed).
+    When ``DATABASE_URL`` is set, wire DB-backed bar_lookup / instrument_lookup
+    / instrument_resolver / data_status so the tools query real Postgres data
+    (the ``instruments`` / ``market_bar`` tables). Otherwise fall back to
+    in-memory stubs (bar_lookup returns [], instrument_lookup returns None);
+    unwired tools return ``NOT_CONFIGURED`` (fail-closed, spec §93).
     """
     reg = InMemoryModelRegistry()
     fs = FeatureSet(names=("ret_1d",))
+
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        backends = _db_mod.make_db_backends(db_url)
+        return ReadTools(registry=reg, featureset=fs, **backends)
 
     def _bars(_iid, _start, _end):
         return []
