@@ -298,8 +298,32 @@ class ReadTools:
     def risk_evaluate_proposal(self, *, instrument_id: str, side: int,
                                quantity: float, ref_price: float,
                                proposed_weight: float,
+                               portfolio_id: str | None = None,
                                **kwargs: Any) -> dict:
         iid = parse_instrument_id(instrument_id)
+        # issue #6: when a portfolio is supplied, derive exposure / currency
+        # exposure from backend data so the Agent cannot bypass risk by
+        # claiming low exposure. Caller kwargs act as test-only overrides
+        # (setdefault keeps them only when the backend has no value).
+        if portfolio_id is not None and self._portfolio_exposures is not None:
+            td = kwargs.get("trade_date") or date.today()
+            as_of_utc = datetime.combine(td, datetime.max.time(),
+                                         tzinfo=timezone.utc)
+            exp = self._portfolio_exposures(portfolio_id, as_of_utc)
+            if exp is not None:
+                # issue #6: backend exposure is AUTHORITATIVE — it overwrites
+                # any caller claim so the Agent cannot bypass risk by claiming
+                # low exposure. Tests that need caller-supplied values must
+                # omit portfolio_id (see test_risk_caller_kwargs_when_no_portfolio_id).
+                kwargs["gross_frac_current"] = exp.get("gross_frac", 0.0)
+                per_name = exp.get("per_name_frac", {}) or {}
+                kwargs["exposure_frac_current"] = per_name.get(iid.canonical(), 0.0)
+                # currency exposure needs the instrument's local currency
+                instr = self._instrument_lookup(iid) if self._instrument_lookup else None
+                ccy = instr.get("currency") if isinstance(instr, dict) else None
+                if ccy:
+                    per_ccy = exp.get("per_ccy_frac", {}) or {}
+                    kwargs["per_ccy_exposure_frac_current"] = per_ccy.get(ccy, 0.0)
         ctx = _build_ctx(iid, side, quantity, ref_price, kwargs)
         p = propose(ctx, proposed_weight=proposed_weight)
         return ok({
@@ -377,6 +401,11 @@ def _build_ctx(iid: InstrumentId, side: int, quantity: float, ref_price: float,
         exposure_frac_limit=kwargs.get("exposure_frac_limit", 0.20),
         gross_frac_current=kwargs.get("gross_frac_current", 0.0),
         gross_frac_limit=kwargs.get("gross_frac_limit", 1.0),
+        # issue #6: per-currency cap (§29). When a portfolio_id is supplied
+        # the server derives this from backend exposure (see risk_evaluate_proposal);
+        # caller kwargs act as test-only override.
+        per_ccy_exposure_frac_current=kwargs.get("per_ccy_exposure_frac_current", 0.0),
+        per_ccy_exposure_limit=kwargs.get("per_ccy_exposure_limit", 0.40),
         stress_shock_bps=kwargs.get("stress_shock_bps", 0.0),
         stress_shock_limit_bps=kwargs.get("stress_shock_limit_bps", 3000.0),
     )

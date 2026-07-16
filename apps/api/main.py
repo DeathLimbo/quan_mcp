@@ -35,6 +35,43 @@ REQ_LATENCY = Histogram("api_request_seconds", "API latency", ["path"])
 async def lifespan(app: FastAPI):
     configure_logging()
     logger.info("api.startup", env=os.getenv("APP_ENV", "dev"))
+    # issue #5: wire a real ForecastService when DATABASE_URL is configured so
+    # /v1/forecast/run serves without test-only monkeypatching. Without DB the
+    # router returns NO_INFERENCE_SERVICE (fail-closed, clear startup state).
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        try:
+            import importlib.util
+            import sys
+            from pathlib import Path
+
+            from packages.features.featureset import FeatureSet
+            from packages.inference.orchestrator import ForecastService
+            from packages.inference.service import InferenceService
+            from packages.models.registry import InMemoryModelRegistry
+
+            _p = (Path(__file__).resolve().parents[2]
+                  / "apps" / "quant-read-mcp" / "db_backends.py")
+            _spec = importlib.util.spec_from_file_location("api_dbb", _p)
+            assert _spec and _spec.loader
+            _mod = importlib.util.module_from_spec(_spec)
+            sys.modules["api_dbb"] = _mod
+            _spec.loader.exec_module(_mod)
+            backends = _mod.make_db_backends(db_url)
+            # NOTE: InMemoryModelRegistry has no PRODUCTION model by default,
+            # so forecasts return NO_PRODUCTION_MODEL until a model is promoted.
+            # The point (issue #5) is the service is wired and runnable, not
+            # that a model exists — that is a separate governance step.
+            inf = InferenceService(InMemoryModelRegistry(),
+                                   FeatureSet(names=("ret_1d",)))
+            app.state.inference_service = ForecastService(
+                inf, backends["bar_lookup"])
+            logger.info("api.forecast_service.wired", db=True)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("api.forecast_service.wire_failed", error=str(e))
+            app.state.inference_service = None
+    else:
+        app.state.inference_service = None
     yield
     logger.info("api.shutdown")
 
