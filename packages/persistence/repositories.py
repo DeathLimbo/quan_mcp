@@ -11,6 +11,7 @@ Repositories for the closed-loop tables added in migration 0009:
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -18,9 +19,29 @@ from typing import Any
 
 import sqlalchemy as sa
 
+from packages.common.instrument_id import Market
 from packages.inference.service import Forecast, NoForecast
+from packages.models.registry import ModelRecord, ModelState
 
 _metadata = sa.MetaData()
+
+model_registry_t = sa.Table(
+    "model_registry", _metadata,
+    sa.Column("model_id", sa.Text, primary_key=True),
+    sa.Column("version", sa.Text, primary_key=True),
+    sa.Column("market", sa.Text, nullable=False),
+    sa.Column("horizon_days", sa.Integer, nullable=False),
+    sa.Column("feature_set_hash", sa.Text, nullable=False),
+    sa.Column("state", sa.Text, nullable=False),
+    sa.Column("created_at_utc", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("approved_by", sa.Text),
+    sa.Column("approval_id", sa.Text),
+    sa.Column("notes", sa.Text),
+    sa.Column("artifact_path", sa.Text),
+    sa.Column("task", sa.Text),
+    sa.Column("feature_names_json", sa.Text),
+    sa.Column("metrics_json", sa.Text),
+)
 
 model_prediction_t = sa.Table(
     "model_prediction", _metadata,
@@ -235,3 +256,136 @@ class SqlJobStore:
                 sa.select(admin_job_t).where(admin_job_t.c.job_id == job_id)
             ).first()
         return dict(row._mapping) if row else None
+
+
+class SqlModelRegistry:
+    """Durable model registry — metadata in the model_registry table, LightGBM
+    booster artifacts on the filesystem. Survives restart so PRODUCTION models
+    reload in milliseconds instead of being retrained every run.
+
+    Implements the ModelRegistry Protocol (register/transition/get_production)
+    plus artifact save/load. ``register`` serializes the artifact via its
+    ``save()`` method; ``get_artifact`` reloads it via ``TrainedLightGBMModel.load``.
+    """
+
+    def __init__(self, engine: sa.Engine, model_store_dir: str) -> None:
+        self._engine = engine
+        self._store = model_store_dir
+
+    def register(self, rec: ModelRecord, *, artifact: object | None = None,
+                 metrics: dict[str, float] | None = None) -> None:
+        artifact_path = None
+        task = None
+        feat_names_json = None
+        if artifact is not None and hasattr(artifact, "save"):
+            p = f"{self._store}/{rec.model_id}_{rec.version}"
+            artifact.save(p)
+            artifact_path = p
+            task = getattr(artifact, "task", None)
+            feat_names = list(getattr(artifact, "feature_names", ()))
+            feat_names_json = json.dumps(feat_names)
+        with self._engine.begin() as conn:
+            conn.execute(sa.insert(model_registry_t).values(
+                model_id=rec.model_id, version=rec.version,
+                market=rec.market.value, horizon_days=rec.horizon_days,
+                feature_set_hash=rec.feature_set_hash,
+                state=rec.state.value,
+                created_at_utc=rec.created_at,
+                approved_by=rec.approved_by, approval_id=rec.approval_id,
+                notes=rec.notes, artifact_path=artifact_path, task=task,
+                feature_names_json=feat_names_json,
+                metrics_json=json.dumps(metrics) if metrics else None,
+            ))
+
+    def transition(self, model_id: str, version: str, to: ModelState, *,
+                   actor: str, approval_id: str | None = None,
+                   metrics: dict[str, float] | None = None) -> ModelRecord:
+        with self._engine.begin() as conn:
+            row = conn.execute(sa.select(model_registry_t).where(
+                model_registry_t.c.model_id == model_id,
+                model_registry_t.c.version == version,
+            )).first()
+            if row is None:
+                raise KeyError(f"unknown model {model_id}@{version}")
+            vals: dict[str, Any] = {"state": to.value}
+            if to is ModelState.PRODUCTION:
+                vals["approved_by"] = actor
+                vals["approval_id"] = approval_id
+            if metrics:
+                vals["metrics_json"] = json.dumps(metrics)
+            conn.execute(sa.update(model_registry_t).where(
+                model_registry_t.c.model_id == model_id,
+                model_registry_t.c.version == version,
+            ).values(**vals))
+        return self.get(model_id, version)
+
+    def get(self, model_id: str, version: str) -> ModelRecord | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(sa.select(model_registry_t).where(
+                model_registry_t.c.model_id == model_id,
+                model_registry_t.c.version == version,
+            )).first()
+        return self._row_to_record(row) if row else None
+
+    def get_production(self, market: Market, horizon_days: int) -> ModelRecord | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(sa.select(model_registry_t).where(
+                model_registry_t.c.state == "PRODUCTION",
+                model_registry_t.c.market == market.value,
+                model_registry_t.c.horizon_days == horizon_days,
+            ).order_by(model_registry_t.c.created_at_utc.desc()).limit(1)).first()
+        return self._row_to_record(row) if row else None
+
+    def get_artifact(self, model_id: str, version: str) -> object | None:
+        """Reload the serialized LightGBM booster (None if no artifact stored)."""
+        with self._engine.connect() as conn:
+            row = conn.execute(sa.select(model_registry_t.c.artifact_path).where(
+                model_registry_t.c.model_id == model_id,
+                model_registry_t.c.version == version,
+            )).first()
+        if not row or not row[0]:
+            return None
+        from packages.training.lightgbm_trainer import TrainedLightGBMModel
+        return TrainedLightGBMModel.load(row[0])
+
+    def get_production_artifact(self, market: Market,
+                                horizon_days: int) -> tuple[ModelRecord | None, object | None]:
+        """PRODUCTION record + reloaded artifact (None, None if absent)."""
+        rec = self.get_production(market, horizon_days)
+        if rec is None:
+            return None, None
+        return rec, self.get_artifact(rec.model_id, rec.version)
+
+    def get_latest_production(self, model_id: str) -> tuple[ModelRecord | None, object | None]:
+        """Latest PRODUCTION version of a given model_id.
+
+        Allows multiple PRODUCTION models per (market, horizon) as long as they
+        differ by model_id — e.g. CN A-share equity and CN fund-NAV models both
+        live under market=CN, horizon=20 but distinct model_ids.
+        """
+        with self._engine.connect() as conn:
+            row = conn.execute(sa.select(model_registry_t).where(
+                model_registry_t.c.model_id == model_id,
+                model_registry_t.c.state == "PRODUCTION",
+            ).order_by(model_registry_t.c.created_at_utc.desc()).limit(1)).first()
+        if not row:
+            return None, None
+        rec = self._row_to_record(row)
+        return rec, self.get_artifact(rec.model_id, rec.version)
+
+    @staticmethod
+    def _row_to_record(row) -> ModelRecord:
+        metrics: dict[str, float] = {}
+        if row.metrics_json:
+            try:
+                metrics = json.loads(row.metrics_json)
+            except Exception:
+                metrics = {}
+        return ModelRecord(
+            model_id=row.model_id, version=row.version,
+            market=Market(row.market), horizon_days=row.horizon_days,
+            feature_set_hash=row.feature_set_hash,
+            state=ModelState(row.state), created_at=row.created_at_utc,
+            approved_by=row.approved_by, approval_id=row.approval_id,
+            metrics=metrics, notes=row.notes,
+        )

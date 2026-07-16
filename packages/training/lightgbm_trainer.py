@@ -15,7 +15,9 @@ attached to a ``ModelRecord`` via ``registry.register(rec, artifact=model)``.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from packages.common.errors import FeatureMissingError
@@ -91,6 +93,56 @@ class TrainedLightGBMModel:
             model_id=self.model_id,
             model_version=self.version,
             feature_set_hash=self.feature_set_hash,
+        )
+
+    def predict_return(self, features: dict[str, float | None]) -> float | None:
+        """Raw forward-return prediction (regression only); None for classifiers.
+
+        Returns the model's expected horizon-day return (e.g. +0.023 = +2.3%),
+        unsquashed — unlike ``predict_one`` which logistic-squashes regression
+        output to [0,1] for the inference-service score contract. Use this when
+        the caller wants the return magnitude, not just direction probability.
+        """
+        if self.task != "regression":
+            return None
+        vec: list[float] = []
+        for n in self.feature_names:
+            v = features.get(n)
+            if v is None:
+                raise FeatureMissingError(f"feature {n} missing at inference")
+            vec.append(float(v))
+        return float(self.booster.predict([vec])[0])
+
+    def save(self, path: str) -> None:
+        """Serialize booster to ``{path}.lgb`` and metadata to ``{path}.json``."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        self.booster.save_model(str(p.with_suffix(".lgb")))
+        meta = {
+            "model_id": self.model_id,
+            "version": self.version,
+            "feature_names": list(self.feature_names),
+            "horizon_days": self.horizon_days,
+            "feature_set_hash": self.feature_set_hash,
+            "task": self.task,
+        }
+        p.with_suffix(".json").write_text(json.dumps(meta), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str) -> "TrainedLightGBMModel":
+        """Reload from ``{path}.lgb`` + ``{path}.json`` written by :meth:`save`."""
+        import lightgbm as lgb
+        p = Path(path)
+        meta = json.loads(p.with_suffix(".json").read_text(encoding="utf-8"))
+        booster = lgb.Booster(model_file=str(p.with_suffix(".lgb")))
+        return cls(
+            model_id=meta["model_id"],
+            version=meta["version"],
+            feature_names=tuple(meta["feature_names"]),
+            booster=booster,
+            horizon_days=meta["horizon_days"],
+            feature_set_hash=meta["feature_set_hash"],
+            task=meta["task"],
         )
 
 
