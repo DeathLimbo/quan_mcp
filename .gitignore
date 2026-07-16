@@ -18,6 +18,11 @@ env/
 
 # Test / coverage
 .pytest_cache/
+.mypy_cache/
+.pytest_tmp/
+
+# Model artifacts (persisted by SqlModelRegistry, issue #10 Phase 1)
+model_store/
 .pytest_tmp/        # local scratch basetemp for sandboxed/Windows runs (issue #7)
 .mypy_cache/
 .ruff_cache/

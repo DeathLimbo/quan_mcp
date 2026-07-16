@@ -23,6 +23,7 @@ from packages.evaluation.promotion import beats_all_baselines
 from packages.models.registry import (
     InMemoryModelRegistry, ModelRecord, ModelState, ModelTransitionError,
 )
+from packages.strategy_governance.service import StrategyGovernanceService
 
 
 TOOL_MANIFEST: list[dict[str, Any]] = [
@@ -114,7 +115,8 @@ def _err_of(code: str, message: str) -> dict:
 
 class AdminTools:
     def __init__(self, *, registry: InMemoryModelRegistry, audit: AuditLog,
-                 job_store: "SqlJobStore | None" = None) -> None:
+                 job_store: "SqlJobStore | None" = None,
+                 governance: "StrategyGovernanceService | None" = None) -> None:
         self._registry = registry
         self._audit = audit
         self._kill_switch = False
@@ -122,6 +124,8 @@ class AdminTools:
         self._pending_promotions: dict[str, PendingPromotion] = {}
         # issue #3: durable job state — when wired, jobs survive restart.
         self._job_store = job_store
+        # issue #10 Phase 2: strategy governance — LLM may propose + read only.
+        self._governance = governance
 
     # ---- 1-5: long-running job creators -----------------------------------
 
@@ -488,3 +492,112 @@ class AdminTools:
     @property
     def kill_switch_engaged(self) -> bool:
         return self._kill_switch
+
+    # ---- issue #10 Phase 2: strategy governance (LLM may propose + read) --
+    # IMPORTANT: transition/approve/reject/suspend/rollback are deliberately
+    # NOT exposed here. Those are human/admin channels. An LLM that somehow
+    # obtained the service could still not self-promote: the policy layer
+    # rejects transition(..., to=PRODUCTION) without a non-empty approval_id.
+
+    def _require_governance(self) -> StrategyGovernanceService:
+        if self._governance is None:
+            raise QuantError(ErrorCode.PERMISSION_DENIED,
+                             "strategy governance not wired on this AdminTools")
+        return self._governance
+
+    def strategy_propose_change(
+        self, *, strategy_id: str, parent_version: str | None,
+        proposed_parameters: dict[str, Any], proposed_factor_refs: list[str],
+        rationale: str, actor_id: str, actor_type: str = "agent",
+    ) -> dict:
+        """LLM-safe: file a change proposal. Returns PROPOSED change_request.
+        Validation/derivation/promotion are separate (non-LLM) steps."""
+        g = self._require_governance()
+        cr = g.propose_change(
+            strategy_id=strategy_id, parent_version=parent_version,
+            proposed_parameters=proposed_parameters,
+            proposed_factor_refs=tuple(proposed_factor_refs),
+            rationale=rationale, actor_id=actor_id, actor_type=actor_type,
+        )
+        return ok({
+            "request_id": cr.request_id, "strategy_id": cr.strategy_id,
+            "status": cr.status.value, "parent_version": cr.parent_version,
+            "created_by": cr.created_by,
+        })
+
+    def strategy_get_version(self, *, strategy_id: str,
+                             version: str) -> dict:
+        g = self._require_governance()
+        v = g.get_version(strategy_id, version)
+        if v is None:
+            return err(ErrorCode.UNKNOWN_INSTRUMENT,
+                       f"unknown strategy version {strategy_id}@{version}")
+        return ok(self._version_to_dict(v))
+
+    def strategy_get_production(self, *, strategy_id: str) -> dict:
+        g = self._require_governance()
+        v = g.get_production(strategy_id)
+        if v is None:
+            return ok({"strategy_id": strategy_id, "production_version": None})
+        return ok(self._version_to_dict(v))
+
+    def strategy_list_versions(self, *, strategy_id: str) -> dict:
+        g = self._require_governance()
+        vs = g.list_versions(strategy_id)
+        return ok({"strategy_id": strategy_id, "versions": [self._version_to_dict(v) for v in vs]})
+
+    def strategy_diff_versions(self, *, strategy_id: str,
+                               parent_version: str | None,
+                               child_version: str) -> dict:
+        g = self._require_governance()
+        try:
+            diff = g.diff_versions(strategy_id, parent_version, child_version)
+        except Exception as e:  # noqa: BLE001
+            return err(ErrorCode.UNKNOWN_INSTRUMENT, str(e))
+        return ok({"strategy_id": strategy_id, "diff": diff})
+
+    def strategy_list_change_requests(self, *, strategy_id: str) -> dict:
+        g = self._require_governance()
+        crs = g.list_change_requests(strategy_id)
+        return ok({"strategy_id": strategy_id, "change_requests": [
+            {"request_id": cr.request_id, "status": cr.status.value,
+             "parent_version": cr.parent_version,
+             "derived_version": cr.derived_version, "rationale": cr.rationale,
+             "created_by": cr.created_by} for cr in crs
+        ]})
+
+    def strategy_list_evaluations(self, *, strategy_id: str,
+                                  version: str) -> dict:
+        g = self._require_governance()
+        runs = g.list_evaluations(strategy_id, version)
+        return ok({"strategy_id": strategy_id, "version": version, "evaluations": [
+            {"run_id": r.run_id, "status": r.status.value,
+             "window": [r.window_start, r.window_end],
+             "regime_slices": list(r.regime_slices), "metrics": r.metrics,
+             "repro_hash": r.repro_hash} for r in runs
+        ]})
+
+    def strategy_get_audit_trail(self, *, strategy_id: str,
+                                 version: str) -> dict:
+        """Promotion decision trail for a strategy version."""
+        g = self._require_governance()
+        decs = g.list_decisions(strategy_id, version)
+        return ok({"strategy_id": strategy_id, "version": version, "decisions": [
+            {"decision_id": d.decision_id, "from": d.from_state.value,
+             "to": d.to_state.value, "outcome": d.outcome.value,
+             "decided_by": d.decided_by, "approval_id": d.approval_id,
+             "reason": d.reason} for d in decs
+        ]})
+
+    @staticmethod
+    def _version_to_dict(v: Any) -> dict[str, Any]:
+        return {
+            "strategy_id": v.strategy_id, "version": v.version,
+            "parent_version": v.parent_version, "market": v.market.value,
+            "horizon_days": v.horizon_days, "state": v.state.value,
+            "feature_set_hash": v.feature_set_hash,
+            "factor_refs": list(v.factor_refs), "model_ref": v.model_ref,
+            "created_by": v.created_by, "approved_by": v.approved_by,
+            "approval_id": v.approval_id,
+            "parameters": v.parameter_set.values,
+        }
