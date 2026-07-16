@@ -14,6 +14,9 @@ Real trainers plug into the same interface (LightGBM/XGBoost/sklearn) via
 """
 from packages.training.trainer import LinearTrainer, TrainedLinearModel, prepare_matrix
 from packages.training.lightgbm_trainer import LightGBMTrainer, TrainedLightGBMModel
+from packages.training.deep_trainer import (
+    MLPTrainer, TrainedMLPModel, LSTMTrainer, TrainedLSTMModel,
+)
 from packages.training.walkforward import (
     OOSPrediction, WalkForwardResult, walk_forward,
 )
@@ -21,5 +24,6 @@ from packages.training.walkforward import (
 __all__ = [
     "LinearTrainer", "TrainedLinearModel", "prepare_matrix",
     "LightGBMTrainer", "TrainedLightGBMModel",
+    "MLPTrainer", "TrainedMLPModel", "LSTMTrainer", "TrainedLSTMModel",
     "OOSPrediction", "WalkForwardResult", "walk_forward",
 ]
