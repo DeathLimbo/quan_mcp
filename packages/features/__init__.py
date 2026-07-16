@@ -11,6 +11,7 @@ from packages.features.registry import (
 from packages.features.featureset import FeatureSet, compute_features
 from packages.features import basics  # noqa: F401  ensure builtins are registered
 from packages.features import technical  # noqa: F401  ensure technical features registered
+from packages.features import fundamental_features  # noqa: F401  ensure fundamentals registered
 
 __all__ = ["feature", "FeatureSpec", "FeatureRegistry", "FundamentalContext", "registry",
            "FeatureSet", "compute_features"]
