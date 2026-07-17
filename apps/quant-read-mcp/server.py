@@ -57,22 +57,13 @@ def _build_default_tools() -> ReadTools:
     in-memory stubs (bar_lookup returns [], instrument_lookup returns None);
     unwired tools return ``NOT_CONFIGURED`` (fail-closed, spec §93).
     """
+    reg = InMemoryModelRegistry()
     fs = FeatureSet(names=("ret_1d",))
 
     db_url = os.getenv("DATABASE_URL")
     if db_url:
-        import sqlalchemy as sa
-        from packages.persistence.repositories import SqlModelRegistry
-        engine = sa.create_engine(db_url, future=True)
-        reg = SqlModelRegistry(
-            engine,
-            model_store_dir=os.getenv(
-                "MODEL_STORE", "/Volumes/Elements/quan_mcp/model_store"),
-        )
         backends = _db_mod.make_db_backends(db_url)
         return ReadTools(registry=reg, featureset=fs, **backends)
-
-    reg = InMemoryModelRegistry()
 
     def _bars(_iid, _start, _end, as_of_utc=None):
         return []
