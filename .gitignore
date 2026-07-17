@@ -55,4 +55,3 @@ mlruns/
 docker-compose.override.yml
 *.pem
 *.key
-paper_portfolio.json
